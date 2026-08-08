@@ -44,7 +44,7 @@ export default function AuthScreen({ onAuthSuccess }: { onAuthSuccess: () => voi
     return pass.length >= 8 && /[A-Z]/.test(pass) && /[0-9]/.test(pass) && /[^A-Za-z0-9]/.test(pass);
   };
 
-  const sanitizeError = (err: any) => {
+const sanitizeError = (err: any) => {
     if (err?.response?.data && typeof err.response.data === 'object' && !err.response.data.error) {
        const firstErrorKey = Object.keys(err.response.data)[0];
        return err.response.data[firstErrorKey] || 'Invalid input provided.';
@@ -52,19 +52,24 @@ export default function AuthScreen({ onAuthSuccess }: { onAuthSuccess: () => voi
 
     const msg = err?.message?.toLowerCase() || err?.response?.data?.error?.toLowerCase() || '';
     
+    // 🟢 FIX: Prioritize exact string matches from the backend first!
+    if (msg.includes('incorrect email') || msg.includes('invalid identity') || msg.includes('bad credentials')) return 'Incorrect email or password. Please try again or register.';
+    
     if (msg.includes('contact method') || msg.includes('platform footprint')) return 'This email is already registered. Please return to login.';
     if (msg.includes('identity signature') || msg.includes('infrastructure')) return 'This username is already taken. Please choose another.';
     if (msg.includes('processing active') || msg.includes('handshake protocol')) return 'A verification code was recently sent to this email. Please wait 10 minutes before trying again.';
     if (msg.includes('staging window lost')) return 'Your verification session expired. Please register again.';
     if (msg.includes('too many invalid attempts')) return 'Too many invalid attempts. Please request a new code.';
     if (msg.includes('no active registration handshake')) return 'Verification failed. The code may have expired, or you need to restart the app.';
-    if (msg.includes('invalid identity credentials') || msg.includes('bad credentials')) return 'Incorrect email or password.';
     if (msg.includes('not found') || msg.includes('404')) return 'We could not find an account with that email.';
     if (msg.includes('network') || msg.includes('timeout')) return 'Network error. Please check your internet connection.';
-    if (msg.includes('deliver') || msg.includes('smtp') || msg.includes('mail')) return 'We could not deliver the email. Please check if the address is typed correctly.';
+    
+    // 🟢 FIX: Removed the greedy 'mail' check so it only triggers on actual SMTP failures
+    if (msg.includes('deliver') || msg.includes('smtp') || msg.includes('connection refused')) return 'We could not deliver the email. Please check if the address is typed correctly.';
+    
     if (msg.includes('500') || msg.includes('internal')) return 'Something went wrong on our end. Please try again later.';
     
-    return err?.message || 'An unexpected error occurred. Please try again.';
+    return err?.response?.data?.error || err?.message || 'An unexpected error occurred. Please try again.';
   };
 
   const validateInput = () => {
