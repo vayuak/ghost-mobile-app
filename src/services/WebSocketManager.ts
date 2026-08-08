@@ -4,8 +4,8 @@ import { Platform } from 'react-native';
 // import { saveMessageLocally } from './LocalDB'; // You will wire your SQLite here later
 
 // Match the port your backend WebSocket is running on (8096 in your logs)
-const WS_BASE_URL = Platform.OS === 'android' ? 'ws://10.0.2.2:8096' : 'ws://localhost:8096';
-
+//const WS_BASE_URL = Platform.OS === 'android' ? 'ws://10.0.2.2:8096' : 'ws://localhost:8096';
+const WS_BASE_URL = 'wss://mode-production-6bbb.up.railway.app';
 class WebSocketManager {
   private client: Client | null = null;
   private isConnected: boolean = false;
