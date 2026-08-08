@@ -1,8 +1,10 @@
 {
+  
   "expo": {
     "name": "GhostShieldMobile",
     "slug": "GhostShieldMobile",
     "version": "1.0.0",
+    "scheme": "ghostshield",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
@@ -20,6 +22,10 @@
     },
     "web": {
       "favicon": "./assets/favicon.png"
-    }
+    },
+    "plugins": [
+      "expo-video",
+      "expo-sqlite"
+    ]
   }
 }
