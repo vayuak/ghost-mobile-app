@@ -2,8 +2,8 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Platform } from 'react-native';
 
 // 🟢 EDGE GATEWAY DISCOVERY
-//export const BASE_URL = Platform.OS === 'android' ? 'http://10.0.2.2:8080' : 'http://localhost:8080';
 export const BASE_URL = Platform.OS === 'android' ? 'https://mode-production-6bbb.up.railway.app' : 'https://mode-production-6bbb.up.railway.app';
+
 // 🔑 Insert your actual Gemini API Key here
 const GEMINI_API_KEY = 'YOUR_GEMINI_API_KEY_HERE'; 
 
@@ -29,7 +29,11 @@ export const apiClient = {
 
     headers.set('X-Ghost-Shield-Key', 'PermanentSecret999');
     
-    if (token) {
+    // 🟢 CRITICAL FIX: Identify if this is a public authentication route
+    const isAuthRoute = endpoint.includes('/auth/');
+
+    // 🟢 CRITICAL FIX: Only attach the Bearer token if it exists AND it's not an auth route
+    if (token && !isAuthRoute) {
       headers.set('Authorization', `Bearer ${token}`);
     }
 
