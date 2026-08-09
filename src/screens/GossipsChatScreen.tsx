@@ -4,7 +4,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Client } from '@stomp/stompjs';
 import CryptoJS from 'crypto-js';
 import { Feather } from '@expo/vector-icons';
-import { apiClient, BASE_URL } from '../services/api';
+import { apiClient, BASE_URL, P2P_WS_URL } from '../services/api';
 import { initLocalDatabase, saveLocalMessage, getLocalMessages } from '../services/LocalDB';
 
 initLocalDatabase();
@@ -12,6 +12,7 @@ initLocalDatabase();
 interface MessageItem {
   msgId?: string;
   sender_username: string;
+  iv?: string;
   content: string;
   timestamp: string;
 }
@@ -88,51 +89,47 @@ export default function GossipsChatScreen({ route, navigation }: any) {
       const wsProtocol = BASE_URL.startsWith('https') ? 'wss://' : 'ws://';
       const wsBaseUrl = BASE_URL.replace(/^https?:\/\//, '');
 
-      const client = new Client({
-        brokerURL: `${wsProtocol}${wsBaseUrl}/v1/ws/ws-chat`,
+     const client = new Client({
+        brokerURL: P2P_WS_URL,
         connectHeaders: { Authorization: `Bearer ${token}` },
         onConnect: () => {
           setIsSecureLinkActive(true);
           setIsConnecting(false);
 
-          client.subscribe(`/queue/shadow-${roomId}`, (msg) => {
-            const payload = JSON.parse(msg.body);
-            const incomingSender = (payload.senderUsername || payload.sender_username || '').trim().toLowerCase();
+// 🟢 FIX 1: Listen to /topic/ instead of /queue/
+        client.subscribe(`/topic/shadow-${roomId}`, (msg) => {
+          const payload = JSON.parse(msg.body);
 
-            // 🟢 STOP ECHO: Instantly ignore own WebSocket reflections
-            if (incomingSender === currentUser) return;
+          try {
+            const decryptedBytes = CryptoJS.AES.decrypt(payload.ciphertext, derivedKey, { 
+              iv: CryptoJS.enc.Hex.parse(payload.iv) 
+            });
+            const decryptedText = decryptedBytes.toString(CryptoJS.enc.Utf8);
+            
+            if (decryptedText) {
+              setMessages((prev) => {
+                // 🟢 FIX 2: The IV Echo-Killer. If we already have this exact cryptographic signature, ignore it!
+                const isEcho = prev.some((m) => m.iv === payload.iv);
+                if (isEcho) return prev;
 
-            try {
-              const decryptedBytes = CryptoJS.AES.decrypt(payload.ciphertext, derivedKey, { 
-                iv: CryptoJS.enc.Hex.parse(payload.iv) 
+                // If it's not an echo, it's a real message from the other person!
+                saveLocalMessage(payload.roomId, targetUser, decryptedText);
+
+                return [...prev, { 
+                  msgId: payload.msgId,
+                  iv: payload.iv,
+                  sender_username: targetUser, // We know it came from them
+                  content: decryptedText,
+                  timestamp: new Date().toISOString()
+                }];
               });
-              const decryptedText = decryptedBytes.toString(CryptoJS.enc.Utf8);
-              
-              if (decryptedText) {
-                saveLocalMessage(payload.roomId, incomingSender, decryptedText);
-                
-                setMessages((prev) => {
-                  const isDuplicate = prev.some((m) => 
-                    (payload.msgId && m.msgId === payload.msgId) ||
-                    (m.content === decryptedText && m.sender_username === incomingSender)
-                  );
-                  
-                  if (isDuplicate) return prev;
 
-                  return [...prev, { 
-                    msgId: payload.msgId,
-                    sender_username: incomingSender, 
-                    content: decryptedText,
-                    timestamp: new Date().toISOString()
-                  }];
-                });
-
-                setTimeout(() => scrollViewRef.current?.scrollToEnd({ animated: true }), 100);
-              }
-            } catch (e) {
-              console.warn("Packet dropped: Decryption failure.");
+              setTimeout(() => scrollViewRef.current?.scrollToEnd({ animated: true }), 100);
             }
-          });
+          } catch (e) {
+            console.warn("Packet dropped: Decryption failure.");
+          }
+        });
         },
         onDisconnect: () => setIsSecureLinkActive(false),
         onStompError: () => setIsConnecting(false)
@@ -179,6 +176,7 @@ export default function GossipsChatScreen({ route, navigation }: any) {
     saveLocalMessage(roomId, activeUser, messageText);
     setMessages((prev) => [...prev, { 
       msgId: clientMsgId,
+      iv: iv,
       sender_username: activeUser, 
       content: messageText,
       timestamp: new Date().toISOString()
@@ -196,7 +194,18 @@ export default function GossipsChatScreen({ route, navigation }: any) {
   return (
     <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={styles.container}>
       <View style={styles.header}>
-        <TouchableOpacity style={styles.backBtn} onPress={() => navigation.goBack()}>
+       {/* 🟢 FIX: Smart Back Button with a safe fallback */}
+        <TouchableOpacity 
+          style={styles.backBtn} 
+          onPress={() => {
+            if (navigation.canGoBack()) {
+              navigation.goBack();
+            } else {
+              // Fallback if opened via deep-link, notification, or Expo reload
+              navigation.navigate('MainTabs'); 
+            }
+          }}
+        >
           <Feather name="arrow-left" size={24} color="#FFFFFF" />
         </TouchableOpacity>
         

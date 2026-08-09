@@ -1,5 +1,4 @@
 {
-  
   "expo": {
     "name": "GhostShieldMobile",
     "slug": "GhostShieldMobile",
@@ -18,7 +17,8 @@
         "backgroundImage": "./assets/android-icon-background.png",
         "monochromeImage": "./assets/android-icon-monochrome.png"
       },
-      "predictiveBackGestureEnabled": false
+      "predictiveBackGestureEnabled": false,
+      "package": "com.azymarch.GhostShieldMobile"
     },
     "web": {
       "favicon": "./assets/favicon.png"
@@ -26,6 +26,11 @@
     "plugins": [
       "expo-video",
       "expo-sqlite"
-    ]
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "7006ab11-c720-42d8-99b3-7bedb78d379a"
+      }
+    }
   }
 }

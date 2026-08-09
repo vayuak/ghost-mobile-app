@@ -55,7 +55,7 @@ export const getRecentConversations = (activeUsername: string) => {
     // 1. Query SQLite for all local messages involving the active user, ordered newest first
     const query = `
       SELECT room_id as roomId, sender_username, content as lastMessage, timestamp 
-      FROM local_messages 
+      FROM messages
       WHERE room_id LIKE ? 
       ORDER BY id DESC
     `;

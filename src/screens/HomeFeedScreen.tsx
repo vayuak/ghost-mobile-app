@@ -78,7 +78,7 @@ export default function HomeFeedScreen({ navigation }: any) {
   }, [searchQuery, selectedCity]);
 
   const handleUserTap = (username: string) => {
-    navigation.navigate('Gossips', { targetUser: username });
+    navigation.navigate('GossipsChat', { targetUser: username });
   };
 
   const allCities = metaMatrix.flatMap(continent => continent.cities);

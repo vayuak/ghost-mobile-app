@@ -99,10 +99,22 @@ const sanitizeError = (err: any) => {
     try {
       const res = await apiClient.post('/v1/auth/login', { identifier: contactId.trim(), password });
       const jwtToken = res.jwt || res.token;
+      
       if (jwtToken) {
+        // 1. Save the token first so subsequent API calls are authenticated
         await AsyncStorage.setItem('@ghost_token', jwtToken);
-        const isolatedHandle = contactId.includes('@') ? contactId.split('@')[0] : contactId;
-        await AsyncStorage.setItem('@active_username', isolatedHandle);
+        
+        // 2. 🟢 ULTIMATE FIX: Ask the backend exactly who this token belongs to
+        try {
+          const meRes = await apiClient.get('/v1/auth/me');
+          const trueUsername = meRes.username.trim().toLowerCase();
+          await AsyncStorage.setItem('@active_username', trueUsername);
+        } catch (meError) {
+          console.error("Failed to fetch /me during login, using fallback", meError);
+          const fallback = contactId.includes('@') ? contactId.split('@')[0] : contactId;
+          await AsyncStorage.setItem('@active_username', fallback.toLowerCase().trim());
+        }
+        
         onAuthSuccess(); 
       }
     } catch (err: any) { 

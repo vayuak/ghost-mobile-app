@@ -9,7 +9,7 @@ const GEMINI_API_KEY = 'YOUR_GEMINI_API_KEY_HERE';
 
 // 🟢 Session Expired Callback Listener
 let onSessionExpiredCallback: (() => void) | null = null;
-
+export const P2P_WS_URL = 'wss://p2p-service-production-70d9.up.railway.app/ws-chat';
 export const setSessionExpiredHandler = (handler: () => void) => {
   onSessionExpiredCallback = handler;
 };
@@ -28,9 +28,20 @@ export const apiClient = {
     }
 
     headers.set('X-Ghost-Shield-Key', 'PermanentSecret999');
-    
-    // 🟢 CRITICAL FIX: Identify if this is a public authentication route
-    const isAuthRoute = endpoint.includes('/auth/');
+    // 🟢 CRITICAL FIX: Identify public auth routes (excluding /auth/me)
+const isAuthRoute = (
+  endpoint.includes('/auth/login') ||
+  endpoint.includes('/auth/register') ||
+  endpoint.includes('/auth/check-username') ||
+  endpoint.includes('/auth/verify-otp') ||
+  endpoint.includes('/auth/forgot-password') ||
+  endpoint.includes('/auth/reset-password')
+);
+
+// Only attach token if it exists AND it's NOT a public auth route
+if (token && !isAuthRoute) {
+  headers.set('Authorization', `Bearer ${token}`);
+}
 
     // 🟢 CRITICAL FIX: Only attach the Bearer token if it exists AND it's not an auth route
     if (token && !isAuthRoute) {

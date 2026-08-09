@@ -5,7 +5,7 @@ import HomeFeedScreen from '../screens/HomeFeedScreen';
 import CreateDirectiveScreen from '../screens/CreateDirectiveScreen';
 import ProfileScreen from '../screens/ProfileScreen';
 import GossipsChatScreen from '../screens/GossipsChatScreen';
-
+import GossipsInboxScreen from '../screens/GossipsInboxScreen';
 const Tab = createBottomTabNavigator();
 
 export default function TabNavigator({ onLogoutTrigger }: { onLogoutTrigger: () => void }) {
@@ -53,9 +53,9 @@ export default function TabNavigator({ onLogoutTrigger }: { onLogoutTrigger: () 
       
       <Tab.Screen name="Create" component={CreateDirectiveScreen} options={{ tabBarLabel: 'Create Post' }} />
       
-      <Tab.Screen 
+     <Tab.Screen 
         name="Gossips" 
-        component={GossipsChatScreen} 
+        component={GossipsInboxScreen} // 🟢 FIX: Render the Inbox here!
         options={{ 
           tabBarLabel: 'Gossips',
           tabBarBadge: unreadChats > 0 ? unreadChats : undefined,
