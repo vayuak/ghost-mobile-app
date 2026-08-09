@@ -1,21 +1,16 @@
 {
   "cli": {
-    "version": ">= 21.7.0",
-    "appVersionSource": "remote"
+    "version": ">= 7.0.0"
   },
   "build": {
-    "development": {
-      "developmentClient": true,
-      "distribution": "internal"
-    },
     "preview": {
-      "distribution": "internal"
-    },
-    "production": {
-      "autoIncrement": true
+      "android": {
+        "buildType": "apk"
+      },
+      "node": "20.10.0",
+      "env": {
+        "NPM_CONFIG_LEGACY_PEER_DEPS": "true"
+      }
     }
-  },
-  "submit": {
-    "production": {}
   }
 }
