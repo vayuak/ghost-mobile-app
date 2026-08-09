@@ -37,7 +37,7 @@
   },
   "devDependencies": {
     "@types/crypto-js": "^4.2.2",
-    "@types/react": "~19.2.2",
+    "@types/react": "~18.2.45",
     "@types/sockjs-client": "^1.5.4",
     "typescript": "~6.0.3"
   },
