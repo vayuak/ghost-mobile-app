@@ -25,7 +25,8 @@
     },
     "plugins": [
       "expo-video",
-      "expo-sqlite"
+      "expo-sqlite",
+      "expo-font"
     ],
     "extra": {
       "eas": {
