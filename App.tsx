@@ -1,7 +1,8 @@
+import 'react-native-get-random-values'; // 🟢 CRITICAL: Must be the absolute first line!
 import 'text-encoding';
 import React, { useState, useEffect } from 'react';
 import { NavigationContainer } from '@react-navigation/native';
-import { createNativeStackNavigator } from '@react-navigation/native-stack'; // 🟢 1. Import Stack
+import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import * as Linking from 'expo-linking';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { ActivityIndicator, View } from 'react-native';
@@ -9,12 +10,14 @@ import { ActivityIndicator, View } from 'react-native';
 // Import your screens and navigators
 import AuthScreen from './src/screens/AuthScreen';
 import TabNavigator from './src/navigation/TabNavigator';
-import GossipsChatScreen from './src/screens/GossipsChatScreen'; // 🟢 2. Import Chat Screen
+import GossipsChatScreen from './src/screens/GossipsChatScreen';
 
-const Stack = createNativeStackNavigator(); // 🟢 3. Initialize Stack
+// 🟢 CRITICAL: Import your DB init function here
+import { initLocalDatabase } from './src/services/LocalDB';
 
-// 🟢 DEEP LINKING CONFIGURATION
-const linking :any= {
+const Stack = createNativeStackNavigator();
+
+const linking: any = {
   prefixes: [Linking.createURL('/'), 'ghostshield://'],
   config: {
     screens: {
@@ -37,12 +40,15 @@ export default function App() {
   useEffect(() => {
     const verifySession = async () => {
       try {
+        // 🟢 FIX: Initialize the database safely AFTER the app is mounted!
+        initLocalDatabase();
+
         const token = await AsyncStorage.getItem('@ghost_token');
         if (token) {
           setIsAuthenticated(true);
         }
       } catch (error) {
-        console.error("Session verification failed:", error);
+        console.error("Session/DB verification failed:", error);
       } finally {
         setIsInitializing(false);
       }
@@ -71,19 +77,13 @@ export default function App() {
   }
 
   return (
-    // 🟢 FIX 2: Pass the variable normally. Remove the ":any" from the prop name!
     <NavigationContainer linking={linking}>
       {isAuthenticated ? (
         <Stack.Navigator screenOptions={{ headerShown: false }}>
-          
-          {/* Base Layer: The Tab Bar */}
           <Stack.Screen name="MainTabs">
             {(props) => <TabNavigator {...props} onLogoutTrigger={handleLogoutTrigger} />}
           </Stack.Screen>
-          
-          {/* Top Layer: Full Screen Chat */}
           <Stack.Screen name="GossipsChat" component={GossipsChatScreen} />
-          
         </Stack.Navigator>
       ) : (
         <AuthScreen onAuthSuccess={handleAuthSuccess} />

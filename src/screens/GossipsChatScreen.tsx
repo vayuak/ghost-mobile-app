@@ -7,7 +7,7 @@ import { Feather } from '@expo/vector-icons';
 import { apiClient, BASE_URL, P2P_WS_URL } from '../services/api';
 import { initLocalDatabase, saveLocalMessage, getLocalMessages } from '../services/LocalDB';
 
-initLocalDatabase();
+
 
 interface MessageItem {
   msgId?: string;
@@ -86,50 +86,44 @@ export default function GossipsChatScreen({ route, navigation }: any) {
       const roomId = [currentUser, targetUser].sort().join('_');
       loadLocalHistory(roomId);
 
-      const wsProtocol = BASE_URL.startsWith('https') ? 'wss://' : 'ws://';
-      const wsBaseUrl = BASE_URL.replace(/^https?:\/\//, '');
-
-     const client = new Client({
+      const client = new Client({
         brokerURL: P2P_WS_URL,
         connectHeaders: { Authorization: `Bearer ${token}` },
         onConnect: () => {
           setIsSecureLinkActive(true);
           setIsConnecting(false);
 
-// 🟢 FIX 1: Listen to /topic/ instead of /queue/
-        client.subscribe(`/topic/shadow-${roomId}`, (msg) => {
-          const payload = JSON.parse(msg.body);
+          client.subscribe(`/topic/shadow-${roomId}`, (msg) => {
+            const payload = JSON.parse(msg.body);
 
-          try {
-            const decryptedBytes = CryptoJS.AES.decrypt(payload.ciphertext, derivedKey, { 
-              iv: CryptoJS.enc.Hex.parse(payload.iv) 
-            });
-            const decryptedText = decryptedBytes.toString(CryptoJS.enc.Utf8);
-            
-            if (decryptedText) {
-              setMessages((prev) => {
-                // 🟢 FIX 2: The IV Echo-Killer. If we already have this exact cryptographic signature, ignore it!
-                const isEcho = prev.some((m) => m.iv === payload.iv);
-                if (isEcho) return prev;
-
-                // If it's not an echo, it's a real message from the other person!
-                saveLocalMessage(payload.roomId, targetUser, decryptedText);
-
-                return [...prev, { 
-                  msgId: payload.msgId,
-                  iv: payload.iv,
-                  sender_username: targetUser, // We know it came from them
-                  content: decryptedText,
-                  timestamp: new Date().toISOString()
-                }];
+            try {
+              const decryptedBytes = CryptoJS.AES.decrypt(payload.ciphertext, derivedKey, { 
+                iv: CryptoJS.enc.Hex.parse(payload.iv) 
               });
+              const decryptedText = decryptedBytes.toString(CryptoJS.enc.Utf8);
+              
+              if (decryptedText) {
+                setMessages((prev) => {
+                  const isEcho = prev.some((m) => m.iv === payload.iv);
+                  if (isEcho) return prev;
 
-              setTimeout(() => scrollViewRef.current?.scrollToEnd({ animated: true }), 100);
+                  saveLocalMessage(payload.roomId, targetUser, decryptedText);
+
+                  return [...prev, { 
+                    msgId: payload.msgId,
+                    iv: payload.iv,
+                    sender_username: targetUser,
+                    content: decryptedText,
+                    timestamp: new Date().toISOString()
+                  }];
+                });
+
+                setTimeout(() => scrollViewRef.current?.scrollToEnd({ animated: true }), 100);
+              }
+            } catch (e) {
+              console.warn("Packet dropped: Decryption failure.");
             }
-          } catch (e) {
-            console.warn("Packet dropped: Decryption failure.");
-          }
-        });
+          });
         },
         onDisconnect: () => setIsSecureLinkActive(false),
         onStompError: () => setIsConnecting(false)
@@ -172,7 +166,6 @@ export default function GossipsChatScreen({ route, navigation }: any) {
       })
     });
 
-    // 🟢 Append locally ONCE with clientMsgId to prevent echoes
     saveLocalMessage(roomId, activeUser, messageText);
     setMessages((prev) => [...prev, { 
       msgId: clientMsgId,
@@ -194,14 +187,12 @@ export default function GossipsChatScreen({ route, navigation }: any) {
   return (
     <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={styles.container}>
       <View style={styles.header}>
-       {/* 🟢 FIX: Smart Back Button with a safe fallback */}
         <TouchableOpacity 
           style={styles.backBtn} 
           onPress={() => {
             if (navigation.canGoBack()) {
               navigation.goBack();
             } else {
-              // Fallback if opened via deep-link, notification, or Expo reload
               navigation.navigate('MainTabs'); 
             }
           }}
@@ -229,6 +220,7 @@ export default function GossipsChatScreen({ route, navigation }: any) {
         </View>
       </View>
 
+      {/* @ts-ignore */}
       <ScrollView ref={scrollViewRef} style={styles.chatArea} contentContainerStyle={{ paddingBottom: 20 }}>
         <View style={styles.encryptionBanner}>
           <Feather name="shield" size={12} color="#D1B000" />
@@ -240,6 +232,7 @@ export default function GossipsChatScreen({ route, navigation }: any) {
           const isMe = msgSender === activeUser;
 
           return (
+            /* @ts-ignore */
             <View key={idx} style={[styles.bubbleWrapper, isMe ? styles.myBubbleWrapper : styles.theirBubbleWrapper]}>
               <View style={[styles.bubble, isMe ? styles.myBubble : styles.theirBubble]}>
                 <Text style={[styles.bubbleText, isMe ? styles.myBubbleText : styles.theirBubbleText]}>
@@ -254,7 +247,6 @@ export default function GossipsChatScreen({ route, navigation }: any) {
         })}
       </ScrollView>
 
-      {/* 🟢 INPUT ROW (Media attachments strictly disabled for Gossips tab) */}
       <View style={styles.inputRow}>
         <TextInput 
           style={styles.input} 
