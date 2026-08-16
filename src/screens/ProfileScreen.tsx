@@ -1,6 +1,7 @@
 import React, { useState, useCallback, useEffect } from 'react';
 import { useFocusEffect } from '@react-navigation/native';
 import { StyleSheet, Text, View, TouchableOpacity, FlatList, Image, Modal, Alert, RefreshControl, Platform } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { Feather, Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -82,7 +83,7 @@ export default function ProfileScreen({ navigation, onLogoutTrigger }: any) {
 
   const handleEditProfileDP = async () => {
     const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ['images'], 
+      mediaTypes: ImagePicker.MediaTypeOptions.Images, 
       allowsEditing: true,
       aspect: [1, 1],
       quality: 0.8,
@@ -102,12 +103,19 @@ export default function ProfileScreen({ navigation, onLogoutTrigger }: any) {
           const blob = await res.blob();
           formData.append('file', blob, filename);
         } else {
-          formData.append('file', { uri: asset.uri, name: filename, type } as any);
+          // 🟢 FIX: Pass asset.uri directly without string manipulation
+          formData.append('file', {
+            uri: asset.uri,
+            name: filename,
+            type: type
+          } as any);
         }
 
         const uploadResponse = await fetch(`${BASE_URL}/v1/social/user/profile/upload-and-update`, {
           method: 'POST',
-          headers: { 'Authorization': `Bearer ${authToken}` },
+          headers: { 
+            'Authorization': `Bearer ${authToken}`
+          },
           body: formData,
         });
 
@@ -125,9 +133,6 @@ export default function ProfileScreen({ navigation, onLogoutTrigger }: any) {
     }
   };
 
-
-   // 🟢 FIX: postId receives 'any' and coerced to String() to fix backend Number vs String bug
- // 🟢 FIX: Strict native fetch implementation to guarantee error catching
   const handleDeletePost = async (postId: any) => {
     try {
       const token = await AsyncStorage.getItem('@ghost_token');
@@ -140,14 +145,12 @@ export default function ProfileScreen({ navigation, onLogoutTrigger }: any) {
         }
       });
 
-      // Attempt to parse any error messages from the backend
       const data = await response.json().catch(() => ({}));
 
       if (!response.ok) {
         throw new Error(data.error || `Server failed with status ${response.status}`);
       }
 
-      // Success! Remove from screen immediately.
       setUserPosts(current => current.filter(post => String(post.id) !== String(postId)));
       Alert.alert("Success", "Post permanently deleted.");
       
@@ -161,7 +164,7 @@ export default function ProfileScreen({ navigation, onLogoutTrigger }: any) {
     : `${BASE_URL}${avatarUri}`;
 
   return (
-    <View style={styles.container}>
+    <SafeAreaView style={styles.container} edges={['top']}>
       <View style={styles.topNav}>
         <Text style={styles.brandTitle}>GHOST<Text style={{ color: '#8E95A5' }}>SHIELD</Text></Text>
         <TouchableOpacity onPress={() => setMenuVisible(true)} style={styles.iconButton}>
@@ -213,16 +216,16 @@ export default function ProfileScreen({ navigation, onLogoutTrigger }: any) {
           </View>
         </View>
       </Modal>
-    </View>
+    </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#000000' },
-  topNav: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 20, paddingTop: 50, paddingBottom: 15, backgroundColor: '#000000' },
+  topNav: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 20, paddingVertical: 15, backgroundColor: '#000000' },
   brandTitle: { color: '#FFF', fontSize: 18, fontWeight: '900', letterSpacing: 1.5 },
   iconButton: { width: 38, height: 38, borderRadius: 19, backgroundColor: '#1A1A1A', justifyContent: 'center', alignItems: 'center', borderWidth: 1, borderColor: '#262626' },
-  profileHeaderContainer: { alignItems: 'center', paddingTop: 25, paddingHorizontal: 20 },
+  profileHeaderContainer: { alignItems: 'center', paddingTop: 10, paddingHorizontal: 20 },
   avatarWrapper: { position: 'relative', marginBottom: 15 },
   avatarGlow: { width: 104, height: 104, borderRadius: 52, borderWidth: 1, borderColor: '#262626', justifyContent: 'center', alignItems: 'center', backgroundColor: '#1A1A1A', overflow: 'hidden' },
   avatarImage: { width: '100%', height: '100%' },

@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { StyleSheet, Text, TextInput, View, TouchableOpacity, Alert, ActivityIndicator, Modal, FlatList, SafeAreaView, Platform, KeyboardAvoidingView } from 'react-native';
+import { StyleSheet, Text, TextInput, View, TouchableOpacity, Alert, ActivityIndicator, Modal, FlatList, Platform, KeyboardAvoidingView } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import * as ImagePicker from 'expo-image-picker';
 import { Feather } from '@expo/vector-icons';
 import { apiClient } from '../services/api';
@@ -39,14 +40,13 @@ export default function CreateDirectiveScreen({ navigation }: any) {
 
   const selectMedia = async () => {
     const result = await ImagePicker.launchImageLibraryAsync({ 
-      mediaTypes: ['images', 'videos'], 
+      mediaTypes: ImagePicker.MediaTypeOptions.All, 
       quality: 0.8 
     });
     
     if (!result.canceled) {
       const asset = result.assets[0];
       
-      // 🟢 STRICT ENFORCEMENT: Block media larger than 50MB (52,428,800 bytes) immediately
       if (asset.fileSize && asset.fileSize > 52428800) {
         return Alert.alert("Upload Blocked", "Media file is too large. Maximum size is strictly 50MB.");
       }
@@ -55,7 +55,6 @@ export default function CreateDirectiveScreen({ navigation }: any) {
   };
 
   const handlePublish = async () => {
-    // 🟢 1. INSTANT TAP REJECTION: If already publishing, ignore the tap.
     if (isPublishingLock.current) return; 
     
     const safeTitle = postTitle.trim();
@@ -67,7 +66,6 @@ export default function CreateDirectiveScreen({ navigation }: any) {
     if (!selectedCity) return Alert.alert("Error", "Target location must be selected.");
     if (!mediaUri) return Alert.alert("Error", "A media attachment is strictly required.");
     
-    // 🟢 2. LOCK THE DOOR: Prevent any further taps synchronously
     isPublishingLock.current = true;
     setLoading(true);
     
@@ -78,19 +76,25 @@ export default function CreateDirectiveScreen({ navigation }: any) {
       formData.append('cityName', selectedCity);
       formData.append('country', selectedContinent);
 
+      const filename = mediaUri.split('/').pop() || 'upload.jpg';
+      const ext = filename.split('.').pop()?.toLowerCase();
+      const type = ext === 'png' ? 'image/png' : (ext === 'mp4' ? 'video/mp4' : 'image/jpeg');
+
       if (Platform.OS === 'web') {
         const response = await fetch(mediaUri);
         const blob = await response.blob();
-        formData.append('file', blob, 'upload.jpg');
+        formData.append('file', blob, filename);
       } else {
-        const filename = mediaUri.split('/').pop() || 'upload.jpg';
-        const type = filename.endsWith('png') ? 'image/png' : 'image/jpeg';
-        formData.append('file', { uri: mediaUri, name: filename, type } as any);
+        // 🟢 FIX: Pass asset.uri directly without string manipulation to ensure valid multipart stream
+        formData.append('file', {
+          uri: mediaUri,
+          name: filename,
+          type: type
+        } as any);
       }
 
       await apiClient.post('/v1/social/post/upload-and-create', formData);
       
-      // 🟢 FIX: Platform-safe success alert so it doesn't fail silently on Web
       if (Platform.OS === 'web') {
         window.alert(`Post Published Successfully! 🚀\nYour post is now live in ${selectedCity.toUpperCase()}.`);
         setPostTitle(''); 
@@ -115,9 +119,8 @@ export default function CreateDirectiveScreen({ navigation }: any) {
       }
       
     } catch (e: any) { 
-      Alert.alert('Upload Failed', e.message); 
+      Alert.alert('Upload Failed', e.message || 'Error publishing post.'); 
     } finally {
-      // 🟢 3. UNLOCK THE DOOR: Only open if the process completes or fails
       isPublishingLock.current = false;
       setLoading(false); 
     }
@@ -129,125 +132,123 @@ export default function CreateDirectiveScreen({ navigation }: any) {
   const filteredCities = mappedCities.filter(cityObj => cityObj.name.toLowerCase().includes(citySearchQuery.toLowerCase()));
 
   return (
-    <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={{ flex: 1 }}>
-      <View style={styles.container}>
-        <Text style={styles.title}>CREATE POST</Text>
-        
-        {/* 🟢 STRICT ENFORCEMENT: Added visual counter for 20 max length */}
-        <View style={styles.inputWrapper}>
-          <TextInput 
-            style={styles.input} 
-            placeholder="Post Title (Max 20 chars)..." 
-            placeholderTextColor="#666666" 
-            value={postTitle} 
-            onChangeText={setPostTitle} 
-            maxLength={20} 
-          />
-          <Text style={[styles.charCounter, postTitle.length >= 20 ? styles.charCounterLimit : null]}>
-            {postTitle.length}/20
-          </Text>
-        </View>
-
-        {/* 🟢 STRICT ENFORCEMENT: Added visual counter for 100 max length */}
-        <View style={styles.inputWrapper}>
-          <TextInput 
-            style={[styles.input, { height: 120, paddingTop: 16, paddingBottom: 30 }]} 
-            placeholder="What's on your mind? (Max 100 chars)..." 
-            placeholderTextColor="#666666" 
-            value={postContent} 
-            onChangeText={setPostContent} 
-            multiline 
-            maxLength={100} 
-          />
-          <Text style={[styles.charCounter, { bottom: 24 }, postContent.length >= 100 ? styles.charCounterLimit : null]}>
-            {postContent.length}/100
-          </Text>
-        </View>
-
-        <Text style={styles.label}>TARGET LOCATION</Text>
-        {fetchingMeta ? (
-          <ActivityIndicator size="small" color="#666666" style={{ marginBottom: 16 }} />
-        ) : (
-          <TouchableOpacity style={styles.dropdownTrigger} onPress={() => setCityModalVisible(true)}>
-            <Text style={styles.dropdownTriggerIcon}>📍</Text>
-            <Text style={styles.dropdownTriggerText}>{selectedCity ? selectedCity.toUpperCase() : "SELECT AREA / CITY"}</Text>
-            <Text style={styles.dropdownTriggerArrow}>▼</Text>
-          </TouchableOpacity>
-        )}
-
-        <Modal visible={isCityModalVisible} animationType="slide" transparent={true}>
-          <SafeAreaView style={styles.modalContainer}>
-            <View style={styles.modalHeader}>
-              <TouchableOpacity onPress={() => setCityModalVisible(false)}>
-                <Text style={styles.closeBtn}>✕ Close</Text>
-              </TouchableOpacity>
-              <Text style={styles.modalTitle}>Where did this happen?</Text>
-              <View style={{ width: 50 }} />
-            </View>
-            
-            <View style={styles.modalSearchContainer}>
-              <Text style={{color: '#666666', fontWeight: '900', marginRight: 10, fontSize: 16}}>🔍</Text>
-              <TextInput 
-                style={{flex: 1, color: '#FFFFFF', fontSize: 14, fontWeight: '700', letterSpacing: 1}}
-                placeholder="Search city..."
-                placeholderTextColor="#666666"
-                value={citySearchQuery}
-                onChangeText={setCitySearchQuery}
-              />
-            </View>
-
-            <FlatList 
-              data={filteredCities}
-              keyExtractor={(item, index) => item.name + index}
-              renderItem={({ item }) => (
-                <TouchableOpacity 
-                  style={styles.cityListItem} 
-                  onPress={() => {
-                    setSelectedCity(item.name);
-                    setSelectedContinent(item.continent);
-                    setCityModalVisible(false);
-                    setCitySearchQuery('');
-                  }}
-                >
-                  <Text style={styles.cityListItemText}>{item.name.toUpperCase()}</Text>
-                  <Text style={styles.cityListSubText}>{item.continent}</Text>
-                </TouchableOpacity>
-              )}
-              ListEmptyComponent={<Text style={{color: '#666666', textAlign: 'center', marginTop: 20}}>No cities found</Text>}
+    <SafeAreaView style={{ flex: 1, backgroundColor: '#000000' }} edges={['top']}>
+      <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={{ flex: 1 }}>
+        <View style={styles.container}>
+          <Text style={styles.title}>CREATE POST</Text>
+          
+          <View style={styles.inputWrapper}>
+            <TextInput 
+              style={styles.input} 
+              placeholder="Post Title (Max 20 chars)..." 
+              placeholderTextColor="#666666" 
+              value={postTitle} 
+              onChangeText={setPostTitle} 
+              maxLength={20} 
             />
-          </SafeAreaView>
-        </Modal>
+            <Text style={[styles.charCounter, postTitle.length >= 20 ? styles.charCounterLimit : null]}>
+              {postTitle.length}/20
+            </Text>
+          </View>
 
-        <TouchableOpacity style={[styles.mediaBtn, mediaUri ? styles.mediaBtnActive : null]} onPress={selectMedia}>
-          <Feather name={mediaUri ? "check-circle" : "image"} size={20} color={mediaUri ? "#34C759" : "#666666"} style={{marginRight: 8}} />
-          <Text style={[styles.mediaBtnText, mediaUri ? {color: '#34C759'} : null]}>
-            {mediaUri ? 'MEDIA ATTACHED' : 'ATTACH MEDIA (MAX 50MB)'}
-          </Text>
-        </TouchableOpacity>
+          <View style={styles.inputWrapper}>
+            <TextInput 
+              style={[styles.input, { height: 120, paddingTop: 16, paddingBottom: 30 }]} 
+              placeholder="What's on your mind? (Max 100 chars)..." 
+              placeholderTextColor="#666666" 
+              value={postContent} 
+              onChangeText={setPostContent} 
+              multiline 
+              maxLength={100} 
+            />
+            <Text style={[styles.charCounter, { bottom: 24 }, postContent.length >= 100 ? styles.charCounterLimit : null]}>
+              {postContent.length}/100
+            </Text>
+          </View>
 
-        {/* 🟢 STRICT ENFORCEMENT: Disable publish button entirely if rules are not met */}
-        <TouchableOpacity 
-          style={[styles.publishBtn, (!postTitle.trim() || !postContent.trim() || !mediaUri) ? { opacity: 0.5 } : null]} 
-          onPress={handlePublish}
-          disabled={!postTitle.trim() || !postContent.trim() || !mediaUri || loading}
-        >
-          {loading ? <ActivityIndicator color="#000" /> : <Text style={styles.publishBtnText}>PUBLISH POST</Text>}
-        </TouchableOpacity>
-      </View>
-    </KeyboardAvoidingView>
+          <Text style={styles.label}>TARGET LOCATION</Text>
+          {fetchingMeta ? (
+            <ActivityIndicator size="small" color="#666666" style={{ marginBottom: 16 }} />
+          ) : (
+            <TouchableOpacity style={styles.dropdownTrigger} onPress={() => setCityModalVisible(true)}>
+              <Text style={styles.dropdownTriggerIcon}>📍</Text>
+              <Text style={styles.dropdownTriggerText}>{selectedCity ? selectedCity.toUpperCase() : "SELECT AREA / CITY"}</Text>
+              <Text style={styles.dropdownTriggerArrow}>▼</Text>
+            </TouchableOpacity>
+          )}
+
+          <Modal visible={isCityModalVisible} animationType="slide" transparent={true}>
+            <SafeAreaView style={styles.modalContainer} edges={['top', 'bottom']}>
+              <View style={styles.modalHeader}>
+                <TouchableOpacity onPress={() => setCityModalVisible(false)} style={{ padding: 8 }}>
+                  <Text style={styles.closeBtn}>✕ Close</Text>
+                </TouchableOpacity>
+                <Text style={styles.modalTitle}>Where did this happen?</Text>
+                <View style={{ width: 50 }} />
+              </View>
+              
+              <View style={styles.modalSearchContainer}>
+                <Text style={{color: '#666666', fontWeight: '900', marginRight: 10, fontSize: 16}}>🔍</Text>
+                <TextInput 
+                  style={{flex: 1, color: '#FFFFFF', fontSize: 14, fontWeight: '700', letterSpacing: 1}}
+                  placeholder="Search city..."
+                  placeholderTextColor="#666666"
+                  value={citySearchQuery}
+                  onChangeText={setCitySearchQuery}
+                />
+              </View>
+
+              <FlatList 
+                data={filteredCities}
+                keyExtractor={(item, index) => item.name + index}
+                renderItem={({ item }) => (
+                  <TouchableOpacity 
+                    style={styles.cityListItem} 
+                    onPress={() => {
+                      setSelectedCity(item.name);
+                      setSelectedContinent(item.continent);
+                      setCityModalVisible(false);
+                      setCitySearchQuery('');
+                    }}
+                  >
+                    <Text style={styles.cityListItemText}>{item.name.toUpperCase()}</Text>
+                    <Text style={styles.cityListSubText}>{item.continent}</Text>
+                  </TouchableOpacity>
+                )}
+                ListEmptyComponent={<Text style={{color: '#666666', textAlign: 'center', marginTop: 20}}>No cities found</Text>}
+              />
+            </SafeAreaView>
+          </Modal>
+
+          <TouchableOpacity style={[styles.mediaBtn, mediaUri ? styles.mediaBtnActive : null]} onPress={selectMedia}>
+            <Feather name={mediaUri ? "check-circle" : "image"} size={20} color={mediaUri ? "#34C759" : "#666666"} style={{marginRight: 8}} />
+            <Text style={[styles.mediaBtnText, mediaUri ? {color: '#34C759'} : null]}>
+              {mediaUri ? 'MEDIA ATTACHED' : 'ATTACH MEDIA (MAX 50MB)'}
+            </Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity 
+            style={[styles.publishBtn, (!postTitle.trim() || !postContent.trim() || !mediaUri) ? { opacity: 0.5 } : null]} 
+            onPress={handlePublish}
+            disabled={!postTitle.trim() || !postContent.trim() || !mediaUri || loading}
+          >
+            {loading ? <ActivityIndicator color="#000" /> : <Text style={styles.publishBtnText}>PUBLISH POST</Text>}
+          </TouchableOpacity>
+        </View>
+      </KeyboardAvoidingView>
+    </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, padding: 24, paddingTop: 60, backgroundColor: '#000000' },
+  container: { flex: 1, padding: 24, backgroundColor: '#000000' },
   title: { fontSize: 18, fontWeight: '900', color: '#666666', marginBottom: 24, letterSpacing: 2 },
   label: { fontSize: 12, fontWeight: '800', color: '#666666', marginBottom: 12, letterSpacing: 1 },
   
-  // 🟢 New styles to support character counters
   inputWrapper: { position: 'relative', marginBottom: 16 },
   input: { backgroundColor: '#1A1A1A', color: '#FFFFFF', padding: 16, borderRadius: 8, borderWidth: 1, borderColor: '#262626', fontSize: 15, fontWeight: '600' },
   charCounter: { position: 'absolute', bottom: 12, right: 12, fontSize: 10, fontWeight: '800', color: '#666666', letterSpacing: 1 },
-  charCounterLimit: { color: '#FF4444' }, // Turns red when limit is hit
+  charCounterLimit: { color: '#FF4444' },
 
   dropdownTrigger: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#1A1A1A', borderRadius: 8, padding: 16, borderWidth: 1, borderColor: '#262626', marginBottom: 24 },
   dropdownTriggerIcon: { fontSize: 18, marginRight: 10 },

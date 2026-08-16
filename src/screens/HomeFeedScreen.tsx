@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { StyleSheet, Text, View, TextInput, TouchableOpacity, FlatList, ActivityIndicator, SafeAreaView, Modal, Alert, Image } from 'react-native';
+import { StyleSheet, Text, View, TextInput, TouchableOpacity, FlatList, ActivityIndicator, Modal, Image } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context'; // 🟢 FIX: Replaced react-native SafeAreaView to stop UI overlap
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { apiClient, BASE_URL } from '../services/api';
 import PostCard from '../components/PostCard';
@@ -23,8 +24,6 @@ export default function HomeFeedScreen({ navigation }: any) {
       if (user) setActiveUser(user);
     });
   }, []);
-
-  // 🟢 FIX: handleDeletePostFromFeed was removed entirely to prevent deleting from Home Feed
 
   useEffect(() => {
     const silentRefreshInterval = setInterval(async () => {
@@ -85,7 +84,7 @@ export default function HomeFeedScreen({ navigation }: any) {
   const filteredCities = allCities.filter(city => city.toLowerCase().includes(citySearchQuery.toLowerCase()));
 
   return (
-    <SafeAreaView style={styles.screenContainer}>
+    <SafeAreaView style={styles.screenContainer} edges={['top']}>
       <View style={styles.headerContainer}>
         <View style={styles.searchBarContainer}>
           <Text style={styles.searchPrefix}>🔍</Text>
@@ -162,7 +161,6 @@ export default function HomeFeedScreen({ navigation }: any) {
           contentContainerStyle={{ paddingBottom: 20 }}
           renderItem={({ item }) => {
             if (searchType === 'USERS') {
-              // 🟢 FIX: Safely parse and render avatars in search results!
               const avatarUri = item.avatarUrl || item.profilePictureUrl;
               const formattedAvatar = avatarUri 
                 ? (avatarUri.startsWith('http') ? avatarUri : `${BASE_URL}${avatarUri}`)
@@ -191,7 +189,6 @@ export default function HomeFeedScreen({ navigation }: any) {
               <PostCard 
                 post={item} 
                 currentUsername={activeUser} 
-                // 🟢 FIX: onDelete prop is intentionally left out here to disable post deletion on Home tab
               />
             );
           }}

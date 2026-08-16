@@ -6,6 +6,7 @@ import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import * as Linking from 'expo-linking';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { ActivityIndicator, View } from 'react-native';
+import { SafeAreaProvider } from 'react-native-safe-area-context';
 
 // Import your screens and navigators
 import AuthScreen from './src/screens/AuthScreen';
@@ -77,17 +78,19 @@ export default function App() {
   }
 
   return (
-    <NavigationContainer linking={linking}>
-      {isAuthenticated ? (
-        <Stack.Navigator screenOptions={{ headerShown: false }}>
-          <Stack.Screen name="MainTabs">
-            {(props) => <TabNavigator {...props} onLogoutTrigger={handleLogoutTrigger} />}
-          </Stack.Screen>
-          <Stack.Screen name="GossipsChat" component={GossipsChatScreen} />
-        </Stack.Navigator>
-      ) : (
-        <AuthScreen onAuthSuccess={handleAuthSuccess} />
-      )}
-    </NavigationContainer>
+    <SafeAreaProvider>
+      <NavigationContainer linking={linking}>
+        {isAuthenticated ? (
+          <Stack.Navigator screenOptions={{ headerShown: false }}>
+            <Stack.Screen name="MainTabs">
+              {(props) => <TabNavigator {...props} onLogoutTrigger={handleLogoutTrigger} />}
+            </Stack.Screen>
+            <Stack.Screen name="GossipsChat" component={GossipsChatScreen} />
+          </Stack.Navigator>
+        ) : (
+          <AuthScreen onAuthSuccess={handleAuthSuccess} />
+        )}
+      </NavigationContainer>
+    </SafeAreaProvider>
   );
 }

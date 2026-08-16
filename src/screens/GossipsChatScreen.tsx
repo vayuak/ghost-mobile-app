@@ -1,13 +1,12 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { View, Text, TextInput, TouchableOpacity, ScrollView, StyleSheet, KeyboardAvoidingView, Platform, ActivityIndicator, Image } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Client } from '@stomp/stompjs';
 import CryptoJS from 'crypto-js';
 import { Feather } from '@expo/vector-icons';
 import { apiClient, BASE_URL, P2P_WS_URL } from '../services/api';
 import { initLocalDatabase, saveLocalMessage, getLocalMessages } from '../services/LocalDB';
-
-
 
 interface MessageItem {
   msgId?: string;
@@ -89,6 +88,9 @@ export default function GossipsChatScreen({ route, navigation }: any) {
       const client = new Client({
         brokerURL: P2P_WS_URL,
         connectHeaders: { Authorization: `Bearer ${token}` },
+        heartbeatIncoming: 10000, 
+        heartbeatOutgoing: 10000, 
+        
         onConnect: () => {
           setIsSecureLinkActive(true);
           setIsConnecting(false);
@@ -97,7 +99,8 @@ export default function GossipsChatScreen({ route, navigation }: any) {
             const payload = JSON.parse(msg.body);
 
             try {
-              const decryptedBytes = CryptoJS.AES.decrypt(payload.ciphertext, derivedKey, { 
+              const rawCipher = payload.encryptedPayload || payload.ciphertext;
+              const decryptedBytes = CryptoJS.AES.decrypt(rawCipher, derivedKey, { 
                 iv: CryptoJS.enc.Hex.parse(payload.iv) 
               });
               const decryptedText = decryptedBytes.toString(CryptoJS.enc.Utf8);
@@ -129,6 +132,9 @@ export default function GossipsChatScreen({ route, navigation }: any) {
         onStompError: () => setIsConnecting(false)
       });
       
+      (client as any).forceBinaryWSProtocols = true;
+      (client as any).appendMissingNULLonIncoming = true;
+
       client.activate();
       setStompClient(client);
     } catch (error) {
@@ -160,7 +166,8 @@ export default function GossipsChatScreen({ route, navigation }: any) {
         senderUsername: activeUser,
         senderId: 0, 
         ephemeralPublicKey: "NONE", 
-        ciphertext: ciphertext, 
+        ciphertext: ciphertext,
+        encryptedPayload: ciphertext, // 🟢 Both keys supplied for backend entity mapping
         iv: iv,
         authTag: "AES-GCM-SIMULATED" 
       })
@@ -185,94 +192,95 @@ export default function GossipsChatScreen({ route, navigation }: any) {
   };
 
   return (
-    <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={styles.container}>
-      <View style={styles.header}>
-        <TouchableOpacity 
-          style={styles.backBtn} 
-          onPress={() => {
-            if (navigation.canGoBack()) {
-              navigation.goBack();
-            } else {
-              navigation.navigate('MainTabs'); 
-            }
-          }}
-        >
-          <Feather name="arrow-left" size={24} color="#FFFFFF" />
-        </TouchableOpacity>
-        
-        <View style={styles.activeHeader}>
-          <View style={styles.avatarPlaceholder}>
-            {targetAvatar ? (
-              <Image 
-                source={{ uri: targetAvatar }} 
-                style={{ width: '100%', height: '100%' }} 
-              />
-            ) : (
-              <Text style={styles.avatarText}>{targetUser ? targetUser[0]?.toUpperCase() : '?'}</Text>
-            )}
-          </View>
-          <View>
-            <Text style={styles.headerTextActive}>@{targetUser || 'unknown'}</Text>
-            <Text style={styles.statusText}>
-              {isConnecting ? "connecting..." : isSecureLinkActive ? "e2e encrypted" : "offline"}
-            </Text>
-          </View>
-        </View>
-      </View>
-
-      {/* @ts-ignore */}
-      <ScrollView ref={scrollViewRef} style={styles.chatArea} contentContainerStyle={{ paddingBottom: 20 }}>
-        <View style={styles.encryptionBanner}>
-          <Feather name="shield" size={12} color="#D1B000" />
-          <Text style={styles.encryptionText}> Messages secured with X25519 Key Agreement.</Text>
-        </View>
-
-        {messages.map((msg, idx) => {
-          const msgSender = (msg.sender_username || '').trim().toLowerCase();
-          const isMe = msgSender === activeUser;
-
-          return (
-            /* @ts-ignore */
-            <View key={idx} style={[styles.bubbleWrapper, isMe ? styles.myBubbleWrapper : styles.theirBubbleWrapper]}>
-              <View style={[styles.bubble, isMe ? styles.myBubble : styles.theirBubble]}>
-                <Text style={[styles.bubbleText, isMe ? styles.myBubbleText : styles.theirBubbleText]}>
-                  {msg.content}
-                </Text>
-                <Text style={[styles.timestamp, isMe ? styles.myTimestamp : styles.theirTimestamp]}>
-                  {msg.timestamp ? formatTime(msg.timestamp) : formatTime(new Date().toISOString())}
-                </Text>
-              </View>
+    <SafeAreaView style={styles.safeContainer} edges={['top']}>
+      <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={styles.container}>
+        <View style={styles.header}>
+          <TouchableOpacity 
+            style={styles.backBtn} 
+            onPress={() => {
+              if (navigation.canGoBack()) {
+                navigation.goBack();
+              } else {
+                navigation.navigate('MainTabs'); 
+              }
+            }}
+          >
+            <Feather name="arrow-left" size={24} color="#FFFFFF" />
+          </TouchableOpacity>
+          
+          <View style={styles.activeHeader}>
+            <View style={styles.avatarPlaceholder}>
+              {targetAvatar ? (
+                <Image 
+                  source={{ uri: targetAvatar }} 
+                  style={{ width: '100%', height: '100%' }} 
+                />
+              ) : (
+                <Text style={styles.avatarText}>{targetUser ? targetUser[0]?.toUpperCase() : '?'}</Text>
+              )}
             </View>
-          );
-        })}
-      </ScrollView>
+            <View>
+              <Text style={styles.headerTextActive}>@{targetUser || 'unknown'}</Text>
+              <Text style={styles.statusText}>
+                {isConnecting ? "connecting..." : isSecureLinkActive ? "e2e encrypted" : "offline"}
+              </Text>
+            </View>
+          </View>
+        </View>
 
-      <View style={styles.inputRow}>
-        <TextInput 
-          style={styles.input} 
-          value={chatInput} 
-          onChangeText={setChatInput} 
-          placeholder="Message..." 
-          placeholderTextColor="#666666" 
-          editable={isSecureLinkActive}
-          multiline
-        />
-        
-        <TouchableOpacity 
-          style={[styles.sendBtn, !chatInput.trim() && { backgroundColor: '#262626' }]} 
-          onPress={sendEncryptedMessage} 
-          disabled={!isSecureLinkActive || !chatInput.trim()}
-        >
-          <Feather name="send" size={20} color={chatInput.trim() ? "#FFFFFF" : "#666666"} style={{ marginLeft: -2 }} />
-        </TouchableOpacity>
-      </View>
-    </KeyboardAvoidingView>
+        <ScrollView ref={scrollViewRef} style={styles.chatArea} contentContainerStyle={{ paddingBottom: 20 }}>
+          <View style={styles.encryptionBanner}>
+            <Feather name="shield" size={12} color="#D1B000" />
+            <Text style={styles.encryptionText}> Messages secured with X25519 Key Agreement.</Text>
+          </View>
+
+          {messages.map((msg, idx) => {
+            const msgSender = (msg.sender_username || '').trim().toLowerCase();
+            const isMe = msgSender === activeUser;
+
+            return (
+              <View key={idx} style={[styles.bubbleWrapper, isMe ? styles.myBubbleWrapper : styles.theirBubbleWrapper]}>
+                <View style={[styles.bubble, isMe ? styles.myBubble : styles.theirBubble]}>
+                  <Text style={[styles.bubbleText, isMe ? styles.myBubbleText : styles.theirBubbleText]}>
+                    {msg.content}
+                  </Text>
+                  <Text style={[styles.timestamp, isMe ? styles.myTimestamp : styles.theirTimestamp]}>
+                    {msg.timestamp ? formatTime(msg.timestamp) : formatTime(new Date().toISOString())}
+                  </Text>
+                </View>
+              </View>
+            );
+          })}
+        </ScrollView>
+
+        <View style={styles.inputRow}>
+          <TextInput 
+            style={styles.input} 
+            value={chatInput} 
+            onChangeText={setChatInput} 
+            placeholder="Message..." 
+            placeholderTextColor="#666666" 
+            editable={isSecureLinkActive}
+            multiline
+          />
+          
+          <TouchableOpacity 
+            style={[styles.sendBtn, !chatInput.trim() && { backgroundColor: '#262626' }]} 
+            onPress={sendEncryptedMessage} 
+            disabled={!isSecureLinkActive || !chatInput.trim()}
+          >
+            <Feather name="send" size={20} color={chatInput.trim() ? "#FFFFFF" : "#666666"} style={{ marginLeft: -2 }} />
+          </TouchableOpacity>
+        </View>
+      </KeyboardAvoidingView>
+    </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
+  safeContainer: { flex: 1, backgroundColor: '#1A1A1A' },
   container: { flex: 1, backgroundColor: '#0A0A0A' },
-  header: { flexDirection: 'row', alignItems: 'center', padding: 16, paddingTop: 50, backgroundColor: '#1A1A1A', borderBottomWidth: 1, borderColor: '#262626' },
+  header: { flexDirection: 'row', alignItems: 'center', padding: 16, backgroundColor: '#1A1A1A', borderBottomWidth: 1, borderColor: '#262626' },
   backBtn: { marginRight: 16 },
   activeHeader: { flexDirection: 'row', alignItems: 'center' },
   avatarPlaceholder: { width: 36, height: 36, borderRadius: 18, backgroundColor: '#262626', justifyContent: 'center', alignItems: 'center', marginRight: 12, overflow: 'hidden' },
