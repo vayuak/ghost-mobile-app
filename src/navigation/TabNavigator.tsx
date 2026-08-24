@@ -1,24 +1,26 @@
 import React, { useState, useEffect } from 'react';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { Feather, MaterialCommunityIcons } from '@expo/vector-icons';
+import { useSafeAreaInsets } from 'react-native-safe-area-context'; 
+
 import HomeFeedScreen from '../screens/HomeFeedScreen';
 import CreateDirectiveScreen from '../screens/CreateDirectiveScreen';
 import ProfileScreen from '../screens/ProfileScreen';
 import GossipsChatScreen from '../screens/GossipsChatScreen';
 import GossipsInboxScreen from '../screens/GossipsInboxScreen';
+
 const Tab = createBottomTabNavigator();
 
 export default function TabNavigator({ onLogoutTrigger }: { onLogoutTrigger: () => void }) {
   const [unreadChats, setUnreadChats] = useState(0);
-  
-  // 🟢 Notifications state logic bound to the Profile Tab
   const [hasUnreadProfileNotifications, setHasUnreadProfileNotifications] = useState(false);
+  
+  // 🟢 Navigation insets logic
+  const insets = useSafeAreaInsets(); 
 
   useEffect(() => {
-    // Background SSE polling / Interval polling here
     const checkSilentUpdates = setInterval(() => {
       // Logic to ping /v1/social/notifications/unread-count could go here
-      // For now, testing logic: setHasUnreadProfileNotifications(true)
     }, 15000);
 
     return () => clearInterval(checkSilentUpdates);
@@ -32,8 +34,9 @@ export default function TabNavigator({ onLogoutTrigger }: { onLogoutTrigger: () 
             backgroundColor: '#000000', 
             borderTopColor: '#262626', 
             borderTopWidth: 1, 
-            height: 70, 
-            paddingBottom: 10, 
+            // 🟢 Nav Bar UI Protection
+            height: 60 + insets.bottom, 
+            paddingBottom: Math.max(10, insets.bottom), 
             paddingTop: 8 
         },
         tabBarActiveTintColor: '#FFFFFF',
@@ -53,9 +56,9 @@ export default function TabNavigator({ onLogoutTrigger }: { onLogoutTrigger: () 
       
       <Tab.Screen name="Create" component={CreateDirectiveScreen} options={{ tabBarLabel: 'Create Post' }} />
       
-     <Tab.Screen 
+      <Tab.Screen 
         name="Gossips" 
-        component={GossipsInboxScreen} // 🟢 FIX: Render the Inbox here!
+        component={GossipsInboxScreen}
         options={{ 
           tabBarLabel: 'Gossips',
           tabBarBadge: unreadChats > 0 ? unreadChats : undefined,
@@ -69,7 +72,6 @@ export default function TabNavigator({ onLogoutTrigger }: { onLogoutTrigger: () 
         }} 
       />
       
-      {/* 🟢 FIX: Passed onLogoutTrigger via render callback just like HomeFeedScreen */}
       <Tab.Screen 
         name="Profile" 
         options={{ 

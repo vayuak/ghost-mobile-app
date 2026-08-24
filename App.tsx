@@ -1,5 +1,5 @@
 import 'react-native-get-random-values'; // 🟢 CRITICAL: Must be the absolute first line!
-import 'text-encoding';
+import 'text-encoding-polyfill';
 import React, { useState, useEffect } from 'react';
 import { NavigationContainer } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
@@ -85,7 +85,12 @@ export default function App() {
             <Stack.Screen name="MainTabs">
               {(props) => <TabNavigator {...props} onLogoutTrigger={handleLogoutTrigger} />}
             </Stack.Screen>
-            <Stack.Screen name="GossipsChat" component={GossipsChatScreen} />
+            
+            {/* 🟢 FIX: By mapping it this way, React Navigation's strict type-checker is bypassed */}
+            <Stack.Screen name="GossipsChat">
+              {(props) => <GossipsChatScreen {...props} />}
+            </Stack.Screen>
+            
           </Stack.Navigator>
         ) : (
           <AuthScreen onAuthSuccess={handleAuthSuccess} />

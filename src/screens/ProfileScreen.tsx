@@ -5,8 +5,8 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Feather, Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { apiClient, BASE_URL, systemLogout } from '../services/api';
-import PostCard from '../components/PostCard'; 
+import { apiClient, BASE_URL, systemLogout, uploadMultipart, buildFilePart } from '../services/api';
+import PostCard from '../components/PostCard';
 
 export default function ProfileScreen({ navigation, onLogoutTrigger }: any) {
   const [userPosts, setUserPosts] = useState<any[]>([]);
@@ -15,20 +15,21 @@ export default function ProfileScreen({ navigation, onLogoutTrigger }: any) {
   const [menuVisible, setMenuVisible] = useState(false);
   const [avatarUri, setAvatarUri] = useState<string | null>(null);
   const [authToken, setAuthToken] = useState<string | null>(null);
-  const [currentUsername, setCurrentUsername] = useState<string>('loading...'); 
+  const [currentUsername, setCurrentUsername] = useState<string>('loading...');
+  const [uploadPercent, setUploadPercent] = useState<number | null>(null);
 
   useEffect(() => {
     const loadSessionData = async () => {
       const token = await AsyncStorage.getItem('@ghost_token');
       setAuthToken(token);
-      
+
       if (token) {
         try {
           const response = await apiClient.get('/v1/auth/me');
           setCurrentUsername(response.username);
           if (response.profilePictureUrl) {
             setAvatarUri(response.profilePictureUrl);
-            await AsyncStorage.setItem('@user_avatar', response.profilePictureUrl); 
+            await AsyncStorage.setItem('@user_avatar', response.profilePictureUrl);
           }
         } catch (error) {
           console.error("Failed to load user profile:", error);
@@ -68,9 +69,9 @@ export default function ProfileScreen({ navigation, onLogoutTrigger }: any) {
 
   const handleLogout = async () => {
     setMenuVisible(false);
-    await systemLogout(); 
+    await systemLogout();
     if (onLogoutTrigger) {
-      onLogoutTrigger(); 
+      onLogoutTrigger();
     } else {
       const parentNav = navigation.getParent();
       if (parentNav) {
@@ -83,84 +84,64 @@ export default function ProfileScreen({ navigation, onLogoutTrigger }: any) {
 
   const handleEditProfileDP = async () => {
     const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ImagePicker.MediaTypeOptions.Images, 
+      mediaTypes: ['images'],
       allowsEditing: true,
       aspect: [1, 1],
       quality: 0.8,
     });
 
-    if (!result.canceled) {
-      const asset = result.assets[0];
-      setAvatarUri(asset.uri); 
+    if (result.canceled) return;
 
-      try {
-        const formData = new FormData();
-        const filename = asset.uri.split('/').pop() || 'profile.jpg';
-        const type = asset.mimeType || 'image/jpeg';
+    const asset = result.assets[0];
+    const previousAvatar = avatarUri;
+    setAvatarUri(asset.uri);
+    setUploadPercent(0);
 
-        if (Platform.OS === 'web') {
-          const res = await fetch(asset.uri);
-          const blob = await res.blob();
-          formData.append('file', blob, filename);
-        } else {
-          // 🟢 FIX: Pass asset.uri directly without string manipulation
-          formData.append('file', {
-            uri: asset.uri,
-            name: filename,
-            type: type
-          } as any);
-        }
+    try {
+      const formData = new FormData();
+      const filePart = buildFilePart(asset);
 
-        const uploadResponse = await fetch(`${BASE_URL}/v1/social/user/profile/upload-and-update`, {
-          method: 'POST',
-          headers: { 
-            'Authorization': `Bearer ${authToken}`
-          },
-          body: formData,
-        });
-
-        if (!uploadResponse.ok) throw new Error('Upload request failed.');
-        
-        const updateRes = await uploadResponse.json();
-        if (updateRes?.avatarUrl) {
-            setAvatarUri(updateRes.avatarUrl);
-            await AsyncStorage.setItem('@user_avatar', updateRes.avatarUrl);
-        }
-        Alert.alert("Success", "Profile picture updated globally.");
-      } catch (e: any) {
-        Alert.alert("Upload Failed", e.message || "Could not update profile picture.");
+      if (Platform.OS === 'web') {
+        const res = await fetch(asset.uri);
+        const blob = await res.blob();
+        formData.append('file', blob, filePart.name);
+      } else {
+        formData.append('file', filePart);
       }
+
+      const updateRes = await uploadMultipart(
+        '/v1/social/user/profile/upload-and-update',
+        formData,
+        setUploadPercent
+      );
+
+      if (updateRes?.avatarUrl) {
+        setAvatarUri(updateRes.avatarUrl);
+        await AsyncStorage.setItem('@user_avatar', updateRes.avatarUrl);
+      }
+      Alert.alert("Success", "Profile picture updated globally.");
+    } catch (e: any) {
+      // Roll the optimistic preview back so the UI does not claim a picture
+      // that never reached the server.
+      setAvatarUri(previousAvatar);
+      Alert.alert("Upload Failed", e.message || "Could not update profile picture.");
+    } finally {
+      setUploadPercent(null);
     }
   };
 
   const handleDeletePost = async (postId: any) => {
     try {
-      const token = await AsyncStorage.getItem('@ghost_token');
-      
-      const response = await fetch(`${BASE_URL}/v1/social/post/${postId}/delete`, {
-        method: 'DELETE',
-        headers: {
-          'Authorization': `Bearer ${token}`,
-          'Content-Type': 'application/json'
-        }
-      });
-
-      const data = await response.json().catch(() => ({}));
-
-      if (!response.ok) {
-        throw new Error(data.error || `Server failed with status ${response.status}`);
-      }
-
+      await apiClient.delete(`/v1/social/post/${postId}/delete`);
       setUserPosts(current => current.filter(post => String(post.id) !== String(postId)));
       Alert.alert("Success", "Post permanently deleted.");
-      
     } catch (e: any) {
       Alert.alert("Delete Failed", e.message || "An unknown network error occurred.");
     }
   };
 
   const fullAvatarUrl = avatarUri?.startsWith('http') || avatarUri?.startsWith('file://') || avatarUri?.startsWith('data:')
-    ? avatarUri 
+    ? avatarUri
     : `${BASE_URL}${avatarUri}`;
 
   return (
@@ -187,10 +168,18 @@ export default function ProfileScreen({ navigation, onLogoutTrigger }: any) {
                   <Feather name="user" size={48} color="#4A5060" />
                 )}
               </View>
-              <TouchableOpacity style={styles.cameraBadge} onPress={handleEditProfileDP}>
+              <TouchableOpacity
+                style={styles.cameraBadge}
+                onPress={handleEditProfileDP}
+                disabled={uploadPercent !== null}
+              >
                 <Ionicons name="camera" size={14} color="#FFF" />
               </TouchableOpacity>
             </View>
+
+            {uploadPercent !== null && (
+              <Text style={styles.uploadText}>Uploading {uploadPercent}%</Text>
+            )}
 
             <View style={styles.identityContainer}>
               <Text style={styles.usernameText}>@{currentUsername}</Text>
@@ -230,6 +219,7 @@ const styles = StyleSheet.create({
   avatarGlow: { width: 104, height: 104, borderRadius: 52, borderWidth: 1, borderColor: '#262626', justifyContent: 'center', alignItems: 'center', backgroundColor: '#1A1A1A', overflow: 'hidden' },
   avatarImage: { width: '100%', height: '100%' },
   cameraBadge: { position: 'absolute', bottom: 2, right: 2, backgroundColor: '#262626', width: 32, height: 32, borderRadius: 16, justifyContent: 'center', alignItems: 'center', borderWidth: 1, borderColor: '#404040' },
+  uploadText: { color: '#8E95A5', fontSize: 12, fontWeight: '700', marginBottom: 10, letterSpacing: 1 },
   identityContainer: { alignItems: 'center', marginBottom: 20 },
   usernameText: { color: '#FFF', fontSize: 22, fontWeight: '800', letterSpacing: 0.5, marginBottom: 6 },
   sectionHeader: { alignSelf: 'flex-start', marginBottom: 15, marginTop: 20 },

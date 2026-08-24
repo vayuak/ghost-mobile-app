@@ -3,19 +3,23 @@ import { StyleSheet, Text, TextInput, View, TouchableOpacity, Alert, ActivityInd
 import { SafeAreaView } from 'react-native-safe-area-context';
 import * as ImagePicker from 'expo-image-picker';
 import { Feather } from '@expo/vector-icons';
-import { apiClient } from '../services/api';
+import { apiClient, uploadMultipart, buildFilePart } from '../services/api';
 
 export default function CreateDirectiveScreen({ navigation }: any) {
   const isPublishingLock = useRef(false);
   const [postTitle, setPostTitle] = useState('');
   const [postContent, setPostContent] = useState('');
   const [mediaUri, setMediaUri] = useState('');
-  
+  // Held alongside mediaUri so the picker's real mimeType and fileName survive
+  // to upload time instead of being guessed from the extension.
+  const [mediaAsset, setMediaAsset] = useState<any>(null);
+
   const [metaMatrix, setMetaMatrix] = useState<any[]>([]);
   const [selectedCity, setSelectedCity] = useState('');
   const [selectedContinent, setSelectedContinent] = useState('');
   const [fetchingMeta, setFetchingMeta] = useState(true);
   const [loading, setLoading] = useState(false);
+  const [uploadPercent, setUploadPercent] = useState<number | null>(null);
 
   const [isCityModalVisible, setCityModalVisible] = useState(false);
   const [citySearchQuery, setCitySearchQuery] = useState('');
@@ -39,24 +43,32 @@ export default function CreateDirectiveScreen({ navigation }: any) {
   }, []);
 
   const selectMedia = async () => {
-    const result = await ImagePicker.launchImageLibraryAsync({ 
-      mediaTypes: ImagePicker.MediaTypeOptions.All, 
-      quality: 0.8 
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ['images', 'videos'],
+      quality: 0.8
     });
-    
+
     if (!result.canceled) {
       const asset = result.assets[0];
-      
+
       if (asset.fileSize && asset.fileSize > 52428800) {
         return Alert.alert("Upload Blocked", "Media file is too large. Maximum size is strictly 50MB.");
       }
       setMediaUri(asset.uri);
+      setMediaAsset(asset);
     }
   };
 
+  const resetForm = () => {
+    setPostTitle('');
+    setPostContent('');
+    setMediaUri('');
+    setMediaAsset(null);
+  };
+
   const handlePublish = async () => {
-    if (isPublishingLock.current) return; 
-    
+    if (isPublishingLock.current) return;
+
     const safeTitle = postTitle.trim();
     const safeContent = postContent.trim();
 
@@ -65,10 +77,11 @@ export default function CreateDirectiveScreen({ navigation }: any) {
     if (safeContent.length > 100) return Alert.alert("Validation Error", `Content is ${safeContent.length} chars. Maximum is 100.`);
     if (!selectedCity) return Alert.alert("Error", "Target location must be selected.");
     if (!mediaUri) return Alert.alert("Error", "A media attachment is strictly required.");
-    
+
     isPublishingLock.current = true;
     setLoading(true);
-    
+    setUploadPercent(0);
+
     try {
       const formData = new FormData();
       formData.append('title', safeTitle);
@@ -76,57 +89,47 @@ export default function CreateDirectiveScreen({ navigation }: any) {
       formData.append('cityName', selectedCity);
       formData.append('country', selectedContinent);
 
-      const filename = mediaUri.split('/').pop() || 'upload.jpg';
-      const ext = filename.split('.').pop()?.toLowerCase();
-      const type = ext === 'png' ? 'image/png' : (ext === 'mp4' ? 'video/mp4' : 'image/jpeg');
+      const filePart = buildFilePart(mediaAsset || { uri: mediaUri });
 
       if (Platform.OS === 'web') {
         const response = await fetch(mediaUri);
         const blob = await response.blob();
-        formData.append('file', blob, filename);
+        formData.append('file', blob, filePart.name);
       } else {
-        // 🟢 FIX: Pass asset.uri directly without string manipulation to ensure valid multipart stream
-        formData.append('file', {
-          uri: mediaUri,
-          name: filename,
-          type: type
-        } as any);
+        formData.append('file', filePart);
       }
 
-      await apiClient.post('/v1/social/post/upload-and-create', formData);
-      
+      await uploadMultipart('/v1/social/post/upload-and-create', formData, setUploadPercent);
+
       if (Platform.OS === 'web') {
         window.alert(`Post Published Successfully! 🚀\nYour post is now live in ${selectedCity.toUpperCase()}.`);
-        setPostTitle(''); 
-        setPostContent(''); 
-        setMediaUri('');
+        resetForm();
         navigation.navigate('Profile');
       } else {
         Alert.alert(
           'Post Published Successfully! 🚀',
           `Your post is now live in ${selectedCity.toUpperCase()}.`,
-          [{ 
-              text: 'View Profile', 
-              style: 'default', 
-              onPress: () => {
-                  setPostTitle(''); 
-                  setPostContent(''); 
-                  setMediaUri('');
-                  navigation.navigate('Profile');
-              }
+          [{
+            text: 'View Profile',
+            style: 'default',
+            onPress: () => {
+              resetForm();
+              navigation.navigate('Profile');
+            }
           }]
         );
       }
-      
-    } catch (e: any) { 
-      Alert.alert('Upload Failed', e.message || 'Error publishing post.'); 
+
+    } catch (e: any) {
+      Alert.alert('Upload Failed', e.message || 'Error publishing post.');
     } finally {
       isPublishingLock.current = false;
-      setLoading(false); 
+      setLoading(false);
+      setUploadPercent(null);
     }
   };
 
-  const mappedCities = metaMatrix.flatMap(continent => 
+  const mappedCities = metaMatrix.flatMap(continent =>
     continent.cities.map((city: string) => ({ name: city, continent: continent.continent }))
   );
   const filteredCities = mappedCities.filter(cityObj => cityObj.name.toLowerCase().includes(citySearchQuery.toLowerCase()));
@@ -136,15 +139,15 @@ export default function CreateDirectiveScreen({ navigation }: any) {
       <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={{ flex: 1 }}>
         <View style={styles.container}>
           <Text style={styles.title}>CREATE POST</Text>
-          
+
           <View style={styles.inputWrapper}>
-            <TextInput 
-              style={styles.input} 
-              placeholder="Post Title (Max 20 chars)..." 
-              placeholderTextColor="#666666" 
-              value={postTitle} 
-              onChangeText={setPostTitle} 
-              maxLength={20} 
+            <TextInput
+              style={styles.input}
+              placeholder="Post Title (Max 20 chars)..."
+              placeholderTextColor="#666666"
+              value={postTitle}
+              onChangeText={setPostTitle}
+              maxLength={20}
             />
             <Text style={[styles.charCounter, postTitle.length >= 20 ? styles.charCounterLimit : null]}>
               {postTitle.length}/20
@@ -152,14 +155,14 @@ export default function CreateDirectiveScreen({ navigation }: any) {
           </View>
 
           <View style={styles.inputWrapper}>
-            <TextInput 
-              style={[styles.input, { height: 120, paddingTop: 16, paddingBottom: 30 }]} 
-              placeholder="What's on your mind? (Max 100 chars)..." 
-              placeholderTextColor="#666666" 
-              value={postContent} 
-              onChangeText={setPostContent} 
-              multiline 
-              maxLength={100} 
+            <TextInput
+              style={[styles.input, { height: 120, paddingTop: 16, paddingBottom: 30 }]}
+              placeholder="What's on your mind? (Max 100 chars)..."
+              placeholderTextColor="#666666"
+              value={postContent}
+              onChangeText={setPostContent}
+              multiline
+              maxLength={100}
             />
             <Text style={[styles.charCounter, { bottom: 24 }, postContent.length >= 100 ? styles.charCounterLimit : null]}>
               {postContent.length}/100
@@ -186,11 +189,11 @@ export default function CreateDirectiveScreen({ navigation }: any) {
                 <Text style={styles.modalTitle}>Where did this happen?</Text>
                 <View style={{ width: 50 }} />
               </View>
-              
+
               <View style={styles.modalSearchContainer}>
-                <Text style={{color: '#666666', fontWeight: '900', marginRight: 10, fontSize: 16}}>🔍</Text>
-                <TextInput 
-                  style={{flex: 1, color: '#FFFFFF', fontSize: 14, fontWeight: '700', letterSpacing: 1}}
+                <Text style={{ color: '#666666', fontWeight: '900', marginRight: 10, fontSize: 16 }}>🔍</Text>
+                <TextInput
+                  style={{ flex: 1, color: '#FFFFFF', fontSize: 14, fontWeight: '700', letterSpacing: 1 }}
                   placeholder="Search city..."
                   placeholderTextColor="#666666"
                   value={citySearchQuery}
@@ -198,12 +201,12 @@ export default function CreateDirectiveScreen({ navigation }: any) {
                 />
               </View>
 
-              <FlatList 
+              <FlatList
                 data={filteredCities}
                 keyExtractor={(item, index) => item.name + index}
                 renderItem={({ item }) => (
-                  <TouchableOpacity 
-                    style={styles.cityListItem} 
+                  <TouchableOpacity
+                    style={styles.cityListItem}
                     onPress={() => {
                       setSelectedCity(item.name);
                       setSelectedContinent(item.continent);
@@ -215,24 +218,30 @@ export default function CreateDirectiveScreen({ navigation }: any) {
                     <Text style={styles.cityListSubText}>{item.continent}</Text>
                   </TouchableOpacity>
                 )}
-                ListEmptyComponent={<Text style={{color: '#666666', textAlign: 'center', marginTop: 20}}>No cities found</Text>}
+                ListEmptyComponent={<Text style={{ color: '#666666', textAlign: 'center', marginTop: 20 }}>No cities found</Text>}
               />
             </SafeAreaView>
           </Modal>
 
           <TouchableOpacity style={[styles.mediaBtn, mediaUri ? styles.mediaBtnActive : null]} onPress={selectMedia}>
-            <Feather name={mediaUri ? "check-circle" : "image"} size={20} color={mediaUri ? "#34C759" : "#666666"} style={{marginRight: 8}} />
-            <Text style={[styles.mediaBtnText, mediaUri ? {color: '#34C759'} : null]}>
+            <Feather name={mediaUri ? "check-circle" : "image"} size={20} color={mediaUri ? "#34C759" : "#666666"} style={{ marginRight: 8 }} />
+            <Text style={[styles.mediaBtnText, mediaUri ? { color: '#34C759' } : null]}>
               {mediaUri ? 'MEDIA ATTACHED' : 'ATTACH MEDIA (MAX 50MB)'}
             </Text>
           </TouchableOpacity>
 
-          <TouchableOpacity 
-            style={[styles.publishBtn, (!postTitle.trim() || !postContent.trim() || !mediaUri) ? { opacity: 0.5 } : null]} 
+          <TouchableOpacity
+            style={[styles.publishBtn, (!postTitle.trim() || !postContent.trim() || !mediaUri) ? { opacity: 0.5 } : null]}
             onPress={handlePublish}
             disabled={!postTitle.trim() || !postContent.trim() || !mediaUri || loading}
           >
-            {loading ? <ActivityIndicator color="#000" /> : <Text style={styles.publishBtnText}>PUBLISH POST</Text>}
+            {loading ? (
+              <Text style={styles.publishBtnText}>
+                {uploadPercent !== null ? `UPLOADING ${uploadPercent}%` : 'PUBLISHING...'}
+              </Text>
+            ) : (
+              <Text style={styles.publishBtnText}>PUBLISH POST</Text>
+            )}
           </TouchableOpacity>
         </View>
       </KeyboardAvoidingView>
@@ -241,10 +250,10 @@ export default function CreateDirectiveScreen({ navigation }: any) {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, padding: 24, backgroundColor: '#000000' },
+  container: { flex: 1, paddingHorizontal: 24, paddingVertical: 16, backgroundColor: '#000000' },
   title: { fontSize: 18, fontWeight: '900', color: '#666666', marginBottom: 24, letterSpacing: 2 },
   label: { fontSize: 12, fontWeight: '800', color: '#666666', marginBottom: 12, letterSpacing: 1 },
-  
+
   inputWrapper: { position: 'relative', marginBottom: 16 },
   input: { backgroundColor: '#1A1A1A', color: '#FFFFFF', padding: 16, borderRadius: 8, borderWidth: 1, borderColor: '#262626', fontSize: 15, fontWeight: '600' },
   charCounter: { position: 'absolute', bottom: 12, right: 12, fontSize: 10, fontWeight: '800', color: '#666666', letterSpacing: 1 },
@@ -254,10 +263,10 @@ const styles = StyleSheet.create({
   dropdownTriggerIcon: { fontSize: 18, marginRight: 10 },
   dropdownTriggerText: { flex: 1, color: '#FFFFFF', fontSize: 14, fontWeight: '800', letterSpacing: 1 },
   dropdownTriggerArrow: { color: '#666666', fontSize: 12, fontWeight: '900' },
-  
+
   modalContainer: { flex: 1, backgroundColor: '#000000' },
   modalHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', padding: 16, borderBottomWidth: 1, borderBottomColor: '#262626' },
-  closeBtn: { color: '#666666', fontWeight: '800' },
+  closeBtn: { color: '#666666', fontWeight: '800', padding: 10 },
   modalTitle: { color: '#FFFFFF', fontWeight: '900', fontSize: 16, letterSpacing: 1 },
   modalSearchContainer: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#1A1A1A', borderRadius: 8, margin: 16, paddingHorizontal: 16, height: 48, borderWidth: 1, borderColor: '#262626' },
   cityListItem: { padding: 16, borderBottomWidth: 1, borderBottomColor: '#1A1A1A' },

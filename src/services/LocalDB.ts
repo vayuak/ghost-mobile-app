@@ -4,7 +4,7 @@ import { Platform } from 'react-native';
 const isWeb = Platform.OS === 'web';
 
 // Safely mock the synchronous DB methods if on the web
-export const db = isWeb 
+export const db = isWeb
   ? {
       execSync: (query: string) => console.log('Web Mock: execSync called'),
       runSync: (query: string, args: any[]) => console.log('Web Mock: runSync called'),
@@ -13,75 +13,137 @@ export const db = isWeb
     } as any
   : SQLite.openDatabaseSync('ghost_shield_secure.db');
 
+let initialized = false;
+
 export const initLocalDatabase = () => {
-  // Execute the real schema on physical devices, ignore on web
+  if (isWeb || initialized) return;
+
   db.execSync(`
     CREATE TABLE IF NOT EXISTS messages (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       room_id TEXT NOT NULL,
       sender_username TEXT NOT NULL,
+      target_username TEXT,
       content TEXT NOT NULL,
       media_url TEXT,
       media_type TEXT,
       timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
     );
   `);
+
+  // Migration for databases created before target_username existed.
+  // SQLite has no ADD COLUMN IF NOT EXISTS, so a failure here just means the
+  // column is already present.
+  try {
+    db.execSync(`ALTER TABLE messages ADD COLUMN target_username TEXT;`);
+  } catch {
+    // column already exists
+  }
+
+  db.execSync(`CREATE INDEX IF NOT EXISTS idx_messages_room ON messages(room_id, id);`);
+
+  initialized = true;
 };
 
-export const saveLocalMessage = (roomId: string, senderUsername: string, content: string, mediaUrl: string | null = null, mediaType: string | null = null) => {
+export const saveLocalMessage = (
+  roomId: string,
+  senderUsername: string,
+  content: string,
+  mediaUrl: string | null = null,
+  mediaType: string | null = null,
+  targetUsername: string | null = null
+) => {
+  if (isWeb) return;
+  initLocalDatabase();
+
   db.runSync(
-    `INSERT INTO messages (room_id, sender_username, content, media_url, media_type) VALUES (?, ?, ?, ?, ?)`,
-    [roomId, senderUsername, content, mediaUrl, mediaType]
+    `INSERT INTO messages (room_id, sender_username, target_username, content, media_url, media_type) VALUES (?, ?, ?, ?, ?, ?)`,
+    [roomId, senderUsername, targetUsername, content, mediaUrl, mediaType]
   );
 };
 
 export const getLocalMessages = (roomId: string) => {
-  return db.getAllSync(`SELECT * FROM messages WHERE room_id = ? ORDER BY timestamp ASC`, [roomId]);
+  if (isWeb) return [];
+  initLocalDatabase();
+  return db.getAllSync(`SELECT * FROM messages WHERE room_id = ? ORDER BY id ASC`, [roomId]);
 };
 
-// This query powers the WhatsApp-style Inbox preview!
 export const getInboxPreviews = () => {
+  if (isWeb) return [];
+  initLocalDatabase();
   return db.getAllSync(`
-    SELECT room_id, sender_username, content, MAX(timestamp) as timestamp 
-    FROM messages 
-    GROUP BY room_id 
+    SELECT room_id, sender_username, content, MAX(timestamp) as timestamp
+    FROM messages
+    GROUP BY room_id
     ORDER BY timestamp DESC
   `);
 };
-export const getRecentConversations = (activeUsername: string) => {
-  try {
-    if (!activeUsername) return [];
 
-    // 1. Query SQLite for all local messages involving the active user, ordered newest first
-    const query = `
-      SELECT room_id as roomId, sender_username, content as lastMessage, timestamp 
-      FROM messages
-      WHERE room_id LIKE ? 
-      ORDER BY id DESC
-    `;
-    
-    const rows: any[] = db.getAllSync(query, [`%${activeUsername.toLowerCase().trim()}%`]);
+/**
+ * Recent conversations for the inbox.
+ *
+ * TWO BUGS FIXED HERE:
+ *
+ * 1. The old query used `WHERE room_id LIKE '%username%'`, a substring match.
+ *    User "bob" matched room "bobby_carl", so unrelated conversations leaked
+ *    into the inbox. Room ids are now decomposed by exact segment equality.
+ *
+ * 2. The old code derived the other participant with roomId.split('_'), which
+ *    breaks for any username containing an underscore. We now prefer the
+ *    stored target_username / sender_username columns and only fall back to
+ *    parsing when neither is available (rows written by an older build).
+ */
+export const getRecentConversations = (activeUsername: string) => {
+  if (isWeb) return [];
+
+  try {
+    const me = (activeUsername || '').trim().toLowerCase();
+    if (!me) return [];
+
+    initLocalDatabase();
+
+    const rows: any[] = db.getAllSync(
+      `SELECT room_id as roomId, sender_username, target_username, content as lastMessage, timestamp
+       FROM messages
+       ORDER BY id DESC`,
+      []
+    );
+
     const seenRooms = new Set<string>();
     const result = [];
 
-    // 2. Filter distinct room IDs so only the single latest message per room is kept
     for (const row of rows) {
-      if (!seenRooms.has(row.roomId)) {
-        seenRooms.add(row.roomId);
-        
-        // Extract the target (other user's) username from the roomId (format: user1_user2)
-        const parts = row.roomId.split('_');
-        const targetUser = parts[0] === activeUsername.toLowerCase().trim() ? parts[1] : parts[0];
-        
-        result.push({
-          roomId: row.roomId,
-          targetUser: targetUser,
-          lastMessage: row.lastMessage,
-          timestamp: row.timestamp
-        });
+      if (seenRooms.has(row.roomId)) continue;
+
+      const sender = (row.sender_username || '').trim().toLowerCase();
+      const stored = (row.target_username || '').trim().toLowerCase();
+
+      let targetUser = '';
+
+      if (sender && stored) {
+        // Both participants are recorded on the row. Pick whichever is not us.
+        if (sender === me) targetUser = stored;
+        else if (stored === me) targetUser = sender;
+        else continue; // room does not involve the active user
+      } else {
+        // Legacy row: fall back to splitting the room id, but require an exact
+        // segment match rather than a substring match.
+        const parts = String(row.roomId).split('_');
+        const idx = parts.indexOf(me);
+        if (idx === -1) continue;
+        targetUser = parts.filter((_: string, i: number) => i !== idx).join('_');
+        if (!targetUser) continue;
       }
+
+      seenRooms.add(row.roomId);
+      result.push({
+        roomId: row.roomId,
+        targetUser,
+        lastMessage: row.lastMessage,
+        timestamp: row.timestamp
+      });
     }
-    
+
     return result;
   } catch (e) {
     console.error("Failed to fetch recent conversations from SQLite:", e);
