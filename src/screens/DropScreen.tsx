@@ -19,11 +19,11 @@ import {
 } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import * as Notifications from 'expo-notifications'; // 🟢 ADDED FOR SILENT BADGES
+import * as Notifications from 'expo-notifications'; 
 import { useHighAccuracyLocation } from '../hooks/useHighAccuracyLocation';
 import { apiClient, BASE_URL } from '../services/api';
 
-// 🟢 FIX 1: Add the missing TS properties to suppress the error
+
 Notifications.setNotificationHandler({
   handleNotification: async () => ({
     shouldShowAlert: true,
@@ -38,7 +38,7 @@ interface NearbyDrop {
   username: string;
   distanceInMeters: number;
   statusMessage: string;
-  avatarUrl?: string | null; // 🟢 ADDED FOR AVATARS
+  avatarUrl?: string | null; 
 }
 
 interface DropsScreenProps {
@@ -144,12 +144,9 @@ export const DropsScreen: React.FC<DropsScreenProps> = ({ onUnreadCountChange })
     }
   };
 
+  // 🟢 FIX: Headers completely removed to prevent Android rendering bugs
   const getSecureImageSource = (uri: string) => {
-    if (Platform.OS === 'web' || uri.includes('amazonaws.com')) return { uri };
-    return { 
-      uri, 
-      headers: { 'X-Ghost-Shield-Key': shieldKey } 
-    };
+    return { uri };
   };
 
   const scanRadar = async () => {
@@ -164,7 +161,6 @@ export const DropsScreen: React.FC<DropsScreenProps> = ({ onUnreadCountChange })
 
       const freshDrops = response || [];
       
-      // 🟢 FIX 2: Fetch avatars for AirDrop users
       const dropsWithAvatars = await Promise.all(
         freshDrops.map(async (drop) => {
           try {
@@ -185,7 +181,6 @@ export const DropsScreen: React.FC<DropsScreenProps> = ({ onUnreadCountChange })
       setDrops(dropsWithAvatars);
 
       if (freshDrops.length !== previousCountRef.current) {
-        // 🟢 FIX 3: Silent notification (just updates the badge dot like WhatsApp)
         if (freshDrops.length > previousCountRef.current) {
           Notifications.setBadgeCountAsync(freshDrops.length);
         }
@@ -206,7 +201,7 @@ export const DropsScreen: React.FC<DropsScreenProps> = ({ onUnreadCountChange })
       setDrops([]);
       previousCountRef.current = 0;
       if (onUnreadCountChange) onUnreadCountChange(0);
-      Notifications.setBadgeCountAsync(0); // Clear badge when radar is off
+      Notifications.setBadgeCountAsync(0); 
     }
   };
 
@@ -357,7 +352,6 @@ export const DropsScreen: React.FC<DropsScreenProps> = ({ onUnreadCountChange })
                   {!isSelf && (
                     <View style={[styles.bubble, styles.bubbleOther]}>
                       
-                      {/* 🟢 AVATAR RENDERED HERE IN BUBBLE HEADER */}
                       <View style={styles.bubbleHeader}>
                         {item.avatarUrl ? (
                           <Image 
@@ -485,10 +479,9 @@ const styles = StyleSheet.create({
   },
   bubbleHeader: {
     flexDirection: 'row',
-    alignItems: 'center', // 🟢 Changed to center to align with avatar
+    alignItems: 'center', 
     marginBottom: 6,
   },
-  // 🟢 Styles for AirDrop Avatars
   airdropAvatarImage: { width: 22, height: 22, borderRadius: 11, marginRight: 8, backgroundColor: '#262626' },
   airdropAvatarFallback: { width: 22, height: 22, borderRadius: 11, backgroundColor: '#262626', justifyContent: 'center', alignItems: 'center', marginRight: 8 },
   airdropAvatarText: { color: '#FFFFFF', fontSize: 10, fontWeight: 'bold' },

@@ -78,8 +78,7 @@ export default function GossipsChatScreen({ route, navigation }: any): React.JSX
   };
 
   const getSecureImageSource = (uri: string) => {
-    if (Platform.OS === 'web' || uri.includes('amazonaws.com')) return { uri };
-    return { uri, headers: authToken ? { Authorization: `Bearer ${authToken}` } : undefined };
+    return { uri };
   };
 
   useEffect(() => {
@@ -88,19 +87,19 @@ export default function GossipsChatScreen({ route, navigation }: any): React.JSX
 
     const boot = async () => {
       try {
-        const storedUser = (await AsyncStorage.getItem('@active_username')) || '';
-        const token = await AsyncStorage.getItem('@ghost_token');
+        // 🟢 FIX: Removed @ symbol from AsyncStorage keys
+        const storedUser = (await AsyncStorage.getItem('active_username')) || '';
+        const token = await AsyncStorage.getItem('ghost_token');
         setAuthToken(token);
         
         const me = storedUser.trim().toLowerCase();
-        setIsPremium(await AsyncStorage.getItem('@is_premium') === 'true');
+        setIsPremium(await AsyncStorage.getItem('is_premium') === 'true');
 
         if (!isMounted) return;
         setActiveUser(me);
         activeUserRef.current = me;
 
-        // Reset Unread Bubble
-        const unreadKey = `@unread_${me}_${targetUser}`;
+        const unreadKey = `unread_${me}_${targetUser}`;
         await AsyncStorage.setItem(unreadKey, '0');
 
         if (!targetUser || !me) {
@@ -303,7 +302,6 @@ export default function GossipsChatScreen({ route, navigation }: any): React.JSX
 
   const handleAttachment = async () => {
     if (isBlocked) return;
-
     if (Platform.OS === 'web') {
       launchImagePicker();
       return;
@@ -333,12 +331,10 @@ export default function GossipsChatScreen({ route, navigation }: any): React.JSX
     if (!result.canceled && result.assets[0].base64) {
       try {
         const base64String = `data:image/jpeg;base64,${result.assets[0].base64}`;
-        
         if (base64String.length > 700000) {
           Alert.alert("Image Too Large", "Please pick a smaller image or crop it before sending.");
           return;
         }
-
         await dispatchEncryptedPayload(`[B64_IMG]${base64String}`);
       } catch (e: any) {
         Alert.alert("Send Failed", "Could not send image.");
@@ -434,7 +430,7 @@ export default function GossipsChatScreen({ route, navigation }: any): React.JSX
 
   return (
     <SafeAreaView style={styles.safeContainer} edges={['top']}>
-      <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={styles.container}>
+      <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={styles.container}>
         <View style={styles.header}>
           <TouchableOpacity style={styles.backBtn} onPress={() => (navigation.canGoBack() ? navigation.goBack() : navigation.navigate('MainTabs'))}>
             <Feather name="arrow-left" size={24} color="#FFFFFF" />

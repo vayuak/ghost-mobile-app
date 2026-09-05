@@ -31,9 +31,6 @@ export const initLocalDatabase = () => {
     );
   `);
 
-  // Migration for databases created before target_username existed.
-  // SQLite has no ADD COLUMN IF NOT EXISTS, so a failure here just means the
-  // column is already present.
   try {
     db.execSync(`ALTER TABLE messages ADD COLUMN target_username TEXT;`);
   } catch {
@@ -79,20 +76,6 @@ export const getInboxPreviews = () => {
   `);
 };
 
-/**
- * Recent conversations for the inbox.
- *
- * TWO BUGS FIXED HERE:
- *
- * 1. The old query used `WHERE room_id LIKE '%username%'`, a substring match.
- *    User "bob" matched room "bobby_carl", so unrelated conversations leaked
- *    into the inbox. Room ids are now decomposed by exact segment equality.
- *
- * 2. The old code derived the other participant with roomId.split('_'), which
- *    breaks for any username containing an underscore. We now prefer the
- *    stored target_username / sender_username columns and only fall back to
- *    parsing when neither is available (rows written by an older build).
- */
 export const getRecentConversations = (activeUsername: string) => {
   if (isWeb) return [];
 
@@ -121,13 +104,10 @@ export const getRecentConversations = (activeUsername: string) => {
       let targetUser = '';
 
       if (sender && stored) {
-        // Both participants are recorded on the row. Pick whichever is not us.
         if (sender === me) targetUser = stored;
         else if (stored === me) targetUser = sender;
-        else continue; // room does not involve the active user
+        else continue; 
       } else {
-        // Legacy row: fall back to splitting the room id, but require an exact
-        // segment match rather than a substring match.
         const parts = String(row.roomId).split('_');
         const idx = parts.indexOf(me);
         if (idx === -1) continue;

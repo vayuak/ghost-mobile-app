@@ -7,10 +7,11 @@ export const BASE_URL = process.env.EXPO_PUBLIC_API_BASE_URL || DEFAULT_URL;
 // Convert base HTTP/HTTPS URL into WSS/WS for WebSockets automatically
 const getWsUrl = (baseUrl: string) => {
   const cleanUrl = baseUrl.replace(/\/$/, '');
+  // 🟢 FIX: Added /ws-chat so the Gateway StripPrefix leaves the correct endpoint
   if (cleanUrl.startsWith('https://')) {
-    return cleanUrl.replace('https://', 'wss://') + '/v1/ws';
+    return cleanUrl.replace('https://', 'wss://') + '/v1/ws/ws-chat';
   }
-  return cleanUrl.replace('http://', 'ws://') + '/v1/ws';
+  return cleanUrl.replace('http://', 'ws://') + '/v1/ws/ws-chat';
 };
 
 export const P2P_WS_URL = getWsUrl(BASE_URL);
@@ -21,6 +22,7 @@ const SHIELD_KEY = process.env.EXPO_PUBLIC_SHIELD_KEY || '';
 if (!SHIELD_KEY) {
   console.warn("⚠️ EXPO_PUBLIC_SHIELD_KEY is missing from .env!");
 }
+
 let onSessionExpiredCallback: (() => void) | null = null;
 
 export const setSessionExpiredHandler = (handler: () => void) => {
@@ -28,7 +30,8 @@ export const setSessionExpiredHandler = (handler: () => void) => {
 };
 
 const wipeSession = async () => {
-  await AsyncStorage.multiRemove(['@ghost_token', '@active_username', '@user_avatar']);
+  // 🟢 FIX: Removed @ symbols
+  await AsyncStorage.multiRemove(['ghost_token', 'active_username', 'user_avatar']);
   if (onSessionExpiredCallback) onSessionExpiredCallback();
 };
 
@@ -40,7 +43,7 @@ export const uploadMultipart = (
   return new Promise(async (resolve, reject) => {
     let token: string | null = null;
     try {
-      token = await AsyncStorage.getItem('@ghost_token');
+      token = await AsyncStorage.getItem('ghost_token'); // 🟢 FIX: Removed @ symbol
     } catch {
       token = null;
     }
@@ -113,7 +116,7 @@ export const buildFilePart = (asset: { uri: string; fileName?: string | null; mi
 export const apiClient = {
   async request(endpoint: string, options: RequestInit = {}) {
     const url = `${BASE_URL}${endpoint}`;
-    const token = await AsyncStorage.getItem('@ghost_token');
+    const token = await AsyncStorage.getItem('ghost_token'); // 🟢 FIX: Removed @ symbol
     const headers = new Headers(options.headers || {});
 
     const isFormData = options.body != null && typeof (options.body as any).append === 'function';
