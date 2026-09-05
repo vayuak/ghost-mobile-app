@@ -1,9 +1,9 @@
 {
   "expo": {
-    "name": "GhostShieldMobile",
-    "slug": "GhostShieldMobile",
+    "name": "Glider", 
+    "slug": "GhostShieldMobile", 
     "version": "1.0.0",
-    "scheme": "ghostshield",
+    "scheme": "glider",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
@@ -12,13 +12,11 @@
     },
     "android": {
       "adaptiveIcon": {
-        "backgroundColor": "#E6F4FE",
-        "foregroundImage": "./assets/android-icon-foreground.png",
-        "backgroundImage": "./assets/android-icon-background.png",
-        "monochromeImage": "./assets/android-icon-monochrome.png"
+        "backgroundColor": "#000000",
+        "foregroundImage": "./assets/android-icon-foreground.png"
       },
       "predictiveBackGestureEnabled": false,
-      "package": "com.azymarch.GhostShieldMobile"
+      "package": "com.azymarch.glider"
     },
     "web": {
       "favicon": "./assets/favicon.png"

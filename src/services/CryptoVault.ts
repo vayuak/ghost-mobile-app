@@ -1,11 +1,9 @@
-import 'react-native-get-random-values'; // 🟢 Native polyfill handles PRNG now
+import 'react-native-get-random-values';
 import nacl from 'tweetnacl';
 import util from 'tweetnacl-util';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { apiClient } from './api';
 
-const PRIVATE_KEY_STORAGE = '@ghost_private_key';
-const PUBLIC_KEY_STORAGE = '@ghost_public_key';
 const PINNED_KEY_PREFIX = '@ghost_pinned_key:';
 
 export const CRYPTO_VERSION = 2;
@@ -25,50 +23,98 @@ export class NoKeyError extends Error {
 }
 
 // ---------------------------------------------------------------------------
-// Device identity
+// Helper: Resolve Active Username
 // ---------------------------------------------------------------------------
 
-/** Create this device's keypair if it does not exist yet. Idempotent. */
-export const initializeDeviceKeys = async (): Promise<string> => {
-  const existingPub = await AsyncStorage.getItem(PUBLIC_KEY_STORAGE);
-  const existingPriv = await AsyncStorage.getItem(PRIVATE_KEY_STORAGE);
+const resolveUsername = async (overrideUser?: string): Promise<string> => {
+  if (overrideUser && overrideUser.trim()) {
+    return overrideUser.trim().toLowerCase();
+  }
+  const stored = await AsyncStorage.getItem('@active_username');
+  return (stored || '').trim().toLowerCase();
+};
 
-  if (existingPub && existingPriv) return existingPub;
+// ---------------------------------------------------------------------------
+// Device Identity (Per-Account Permanent Keys)
+// ---------------------------------------------------------------------------
 
-  // 🟢 FIX: Uses native react-native-get-random-values automatically. No crashes.
+/** 
+ * Create or load this user's keypair on this device.
+ * Keypair is generated ONLY ONCE on first login and reused permanently.
+ */
+export const initializeDeviceKeys = async (usernameOverride?: string): Promise<string> => {
+  const username = await resolveUsername(usernameOverride);
+  if (!username) {
+    throw new Error('Cannot initialize crypto keys without an active username.');
+  }
+
+  const pubKeyStorage = `@ghost_public_key_${username}`;
+  const privKeyStorage = `@ghost_private_key_${username}`;
+
+  // 1. Check for existing account key
+  let existingPub = await AsyncStorage.getItem(pubKeyStorage);
+  let existingPriv = await AsyncStorage.getItem(privKeyStorage);
+
+  // 2. Fallback: Migrate legacy unscoped keys if available
+  if (!existingPub || !existingPriv) {
+    const legacyPub = await AsyncStorage.getItem('@ghost_public_key');
+    const legacyPriv = await AsyncStorage.getItem('@ghost_private_key');
+    if (legacyPub && legacyPriv) {
+      existingPub = legacyPub;
+      existingPriv = legacyPriv;
+      await AsyncStorage.multiSet([
+        [pubKeyStorage, existingPub],
+        [privKeyStorage, existingPriv],
+      ]);
+    }
+  }
+
+  // 3. Return existing key without generating a new one
+  if (existingPub && existingPriv) {
+    return existingPub;
+  }
+
+  // 4. Generate keypair ONLY if no key exists for this username
+  console.log(`[CryptoVault] Generating PERMANENT keypair for @${username}...`);
   const keypair = nacl.box.keyPair();
   const pub = util.encodeBase64(keypair.publicKey);
   const priv = util.encodeBase64(keypair.secretKey);
 
   await AsyncStorage.multiSet([
-    [PRIVATE_KEY_STORAGE, priv],
-    [PUBLIC_KEY_STORAGE, pub],
+    [pubKeyStorage, pub],
+    [privKeyStorage, priv],
   ]);
 
   return pub;
 };
 
-export const getMyPublicKey = async (): Promise<string | null> => {
-  return AsyncStorage.getItem(PUBLIC_KEY_STORAGE);
+export const getMyPublicKey = async (usernameOverride?: string): Promise<string | null> => {
+  const username = await resolveUsername(usernameOverride);
+  if (!username) return null;
+  return AsyncStorage.getItem(`@ghost_public_key_${username}`);
 };
 
-const getMyPrivateKey = async (): Promise<Uint8Array> => {
-  const b64 = await AsyncStorage.getItem(PRIVATE_KEY_STORAGE);
-  if (!b64) throw new Error('Device keys not initialized. Call initializeDeviceKeys() first.');
+const getMyPrivateKey = async (usernameOverride?: string): Promise<Uint8Array> => {
+  const username = await resolveUsername(usernameOverride);
+  const b64 = await AsyncStorage.getItem(`@ghost_private_key_${username}`);
+  if (!b64) throw new Error(`Device keys for @${username} not initialized.`);
   return util.decodeBase64(b64);
 };
 
-export const ensureKeysPublished = async (): Promise<void> => {
-  const myPub = await initializeDeviceKeys();
+export const ensureKeysPublished = async (usernameOverride?: string): Promise<void> => {
   try {
+    const username = await resolveUsername(usernameOverride);
+    if (!username) return;
+
+    const myPub = await initializeDeviceKeys(username);
     await apiClient.post('/v1/auth/keys', { publicKey: myPub });
   } catch (e: any) {
-    console.warn('[crypto] Could not publish public key:', e?.message);
+    console.warn('[CryptoVault] Could not publish public key:', e?.message);
   }
 };
 
 // ---------------------------------------------------------------------------
-// Peer keys, with trust-on-first-use pinning
+// Peer Keys & Trust-On-First-Use (TOFU) Pinning
 // ---------------------------------------------------------------------------
 
 export const getPeerPublicKey = async (
@@ -131,7 +177,7 @@ export const safetyNumber = async (peerUsername: string): Promise<string | null>
 };
 
 // ---------------------------------------------------------------------------
-// Encrypt / decrypt
+// Encrypt / Decrypt
 // ---------------------------------------------------------------------------
 
 export interface EncryptedEnvelope {
@@ -182,7 +228,7 @@ export const decryptFromPeer = async (
   }
 
   if (envelope.senderPublicKey && envelope.senderPublicKey !== trustedSenderKey) {
-    console.warn(`[crypto] Sender key mismatch for @${senderUsername}. Rejecting message.`);
+    console.warn(`[CryptoVault] Sender key mismatch for @${senderUsername}. Rejecting message.`);
     return null;
   }
 
@@ -202,10 +248,16 @@ export const decryptFromPeer = async (
   }
 };
 
-export const wipeCryptoState = async (): Promise<void> => {
+export const wipeCryptoState = async (targetUser?: string): Promise<void> => {
+  const username = await resolveUsername(targetUser);
+  if (!username) return;
+
+  const pubKeyStorage = `@ghost_public_key_${username}`;
+  const privKeyStorage = `@ghost_private_key_${username}`;
+
   const all = await AsyncStorage.getAllKeys();
   const mine = all.filter(
-    (k) => k === PRIVATE_KEY_STORAGE || k === PUBLIC_KEY_STORAGE || k.startsWith(PINNED_KEY_PREFIX)
+    (k) => k === pubKeyStorage || k === privKeyStorage || k.startsWith(PINNED_KEY_PREFIX)
   );
   if (mine.length) await AsyncStorage.multiRemove(mine);
 };

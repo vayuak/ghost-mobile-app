@@ -4,21 +4,11 @@ import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context'
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Client } from '@stomp/stompjs';
 import { Feather } from '@expo/vector-icons';
+import * as ImagePicker from 'expo-image-picker';
 import { apiClient, BASE_URL, P2P_WS_URL } from '../services/api';
 import { initLocalDatabase, saveLocalMessage, getLocalMessages } from '../services/LocalDB';
-import {
-  ensureKeysPublished,
-  encryptForPeer,
-  decryptFromPeer,
-  getPeerPublicKey,
-  acceptPeerKeyChange,
-  safetyNumber,
-  KeyChangedError,
-  NoKeyError,
-  CRYPTO_VERSION,
-} from '../services/CryptoVault';
+import { ensureKeysPublished, encryptForPeer, decryptFromPeer, getPeerPublicKey, acceptPeerKeyChange, safetyNumber, KeyChangedError, NoKeyError, CRYPTO_VERSION } from '../services/CryptoVault';
 
-// 🟢 CRITICAL POLYFILL: Polyfills TextEncoder/Decoder for React Native
 if (typeof global.TextEncoder === 'undefined') {
   global.TextEncoder = class {
     encode(str: string) {
@@ -60,6 +50,9 @@ export default function GossipsChatScreen({ route, navigation }: any): React.JSX
   const [chatInput, setChatInput] = useState('');
   const [activeUser, setActiveUser] = useState('');
   const [targetAvatar, setTargetAvatar] = useState<string | null>(null);
+  const [authToken, setAuthToken] = useState<string | null>(null);
+  const [isPremium, setIsPremium] = useState(false);
+  const [isBlocked, setIsBlocked] = useState(false);
 
   const [isConnecting, setIsConnecting] = useState(true);
   const [isLinkActive, setIsLinkActive] = useState(false);
@@ -70,31 +63,45 @@ export default function GossipsChatScreen({ route, navigation }: any): React.JSX
   const roomIdRef = useRef<string>('');
   const activeUserRef = useRef<string>('');
   const scrollViewRef = useRef<ScrollView>(null);
-  
-  // 🟢 The Offline Message Queue
   const pendingOutboundRef = useRef<any[]>([]);
 
   const scrollToEnd = (animated = true) => {
     setTimeout(() => scrollViewRef.current?.scrollToEnd({ animated }), 100);
   };
 
+  const resolveAvatarUrl = (rawPic: any) => {
+    if (!rawPic || typeof rawPic !== 'string' || rawPic.trim() === '') return null;
+    if (rawPic.startsWith('http') || rawPic.startsWith('file://') || rawPic.startsWith('data:')) return rawPic;
+    const cleanBase = BASE_URL.replace(/\/$/, '');
+    const cleanPath = rawPic.replace(/^\//, '');
+    return `${cleanBase}/${cleanPath}`;
+  };
+
+  const getSecureImageSource = (uri: string) => {
+    if (Platform.OS === 'web' || uri.includes('amazonaws.com')) return { uri };
+    return { uri, headers: authToken ? { Authorization: `Bearer ${authToken}` } : undefined };
+  };
+
   useEffect(() => {
     let isMounted = true;
-
-    try {
-      initLocalDatabase();
-    } catch (e) {
-      console.warn('[Chat] Local database init failed:', e);
-    }
+    try { initLocalDatabase(); } catch (e) {}
 
     const boot = async () => {
       try {
         const storedUser = (await AsyncStorage.getItem('@active_username')) || '';
+        const token = await AsyncStorage.getItem('@ghost_token');
+        setAuthToken(token);
+        
         const me = storedUser.trim().toLowerCase();
+        setIsPremium(await AsyncStorage.getItem('@is_premium') === 'true');
 
         if (!isMounted) return;
         setActiveUser(me);
         activeUserRef.current = me;
+
+        // Reset Unread Bubble
+        const unreadKey = `@unread_${me}_${targetUser}`;
+        await AsyncStorage.setItem(unreadKey, '0');
 
         if (!targetUser || !me) {
           setIsConnecting(false);
@@ -102,11 +109,7 @@ export default function GossipsChatScreen({ route, navigation }: any): React.JSX
           return;
         }
 
-        try {
-          await ensureKeysPublished();
-        } catch (e) {
-          console.warn('[Chat] Key publication non-fatal warn:', e);
-        }
+        try { await ensureKeysPublished(); } catch (e) {}
 
         if (!isMounted) return;
 
@@ -121,71 +124,45 @@ export default function GossipsChatScreen({ route, navigation }: any): React.JSX
         }
 
         fetchTargetProfile();
-        connect(me);
+        connect(me, token);
       } catch (globalError) {
-        console.error('[Chat] Critical boot failure:', globalError);
         setIsConnecting(false);
       }
     };
-
     boot();
-
     return () => {
       isMounted = false;
-      if (clientRef.current) {
-        clientRef.current.deactivate();
-        clientRef.current = null;
-      }
+      if (clientRef.current) { clientRef.current.deactivate(); clientRef.current = null; }
     };
   }, [targetUser]);
 
   const fetchTargetProfile = async () => {
     try {
-      const res = await apiClient.get(`/v1/social/user/${targetUser}/profile`);
-      const rawPic = res.avatarUrl || res.profilePictureUrl || res.data?.avatarUrl;
-      if (rawPic && typeof rawPic === 'string' && rawPic.trim() !== '') {
-        setTargetAvatar(rawPic.startsWith('http') ? rawPic : `${BASE_URL}${rawPic}`);
-      } else {
-        setTargetAvatar(null);
-      }
-    } catch {
-      setTargetAvatar(null);
-    }
+      const res = await apiClient.get(`/v1/p2p/profile/${targetUser}`);
+      const rawPic = res.avatarUrl || res.profilePictureUrl || res.data?.avatarUrl || res.data?.profilePictureUrl;
+      setTargetAvatar(resolveAvatarUrl(rawPic));
+    } catch { setTargetAvatar(null); }
   };
-const connect = async (me: string) => {
+
+  const connect = async (me: string, token: string | null) => {
     setIsConnecting(true);
-
-    if (clientRef.current) {
-      clientRef.current.deactivate();
-      clientRef.current = null;
-    }
-
-    const token = await AsyncStorage.getItem('@ghost_token');
-    if (!token) {
-      setIsConnecting(false);
-      return;
-    }
+    if (clientRef.current) { clientRef.current.deactivate(); clientRef.current = null; }
+    if (!token) { setIsConnecting(false); return; }
 
     const roomId = [me, targetUser].sort().join('_');
     roomIdRef.current = roomId;
     loadLocalHistory(roomId);
 
     const client = new Client({
-      // 🟢 THE ULTIMATE ANDROID NULL-BYTE BYPASS
       webSocketFactory: () => {
         const ws = new WebSocket(P2P_WS_URL);
         const originalSend = ws.send.bind(ws);
-        
         ws.send = (data: any) => {
           if (typeof data === 'string') {
-            // Android strips '\0' from text WebSockets. 
-            // We forcefully convert the string into a binary ArrayBuffer.
-            // This protects the STOMP null-terminator so Spring Boot can parse it.
             const encoder = new TextEncoder();
             const uint8Array = encoder.encode(data);
             originalSend(uint8Array.buffer);
           } else if (data && data.buffer instanceof ArrayBuffer) {
-            // If it's already binary, safely extract the pure ArrayBuffer
             originalSend(data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength));
           } else {
             originalSend(data);
@@ -193,9 +170,8 @@ const connect = async (me: string) => {
         };
         return ws;
       },
-      
       connectHeaders: { Authorization: `Bearer ${token}` },
-      debug: (str) => console.log('[STOMP]', str),
+      debug: () => {},
       heartbeatIncoming: 10000,
       heartbeatOutgoing: 10000,
       reconnectDelay: 5000,
@@ -204,26 +180,17 @@ const connect = async (me: string) => {
         setIsLinkActive(true);
         setIsConnecting(false);
 
-        // 🟢 Flush the offline message queue the moment we connect
         const pending = pendingOutboundRef.current;
         if (pending.length > 0) {
           pending.forEach(payload => {
-            client.publish({
-              destination: '/app/shadow/send',
-              body: JSON.stringify(payload)
-            });
+            client.publish({ destination: '/app/shadow/send', body: JSON.stringify(payload) });
           });
-          // Empty the queue after sending
           pendingOutboundRef.current = [];
         }
 
         client.subscribe(`/topic/shadow-${roomId}`, async (frame) => {
           let payload: any;
-          try {
-            payload = JSON.parse(frame.body);
-          } catch {
-            return;
-          }
+          try { payload = JSON.parse(frame.body); } catch { return; }
 
           const sender = (payload.senderUsername || '').trim().toLowerCase();
           if (sender === activeUserRef.current) return;
@@ -241,47 +208,28 @@ const connect = async (me: string) => {
           setMessages((prev) => {
             if (payload.msgId && prev.some((m) => m.msgId === payload.msgId)) return prev;
 
-            if (plaintext === null) {
-              return [...prev, {
-                msgId: payload.msgId,
-                sender_username: sender || targetUser,
-                content: 'Message could not be verified',
-                timestamp: new Date().toISOString(),
-                undecryptable: true,
-              }];
-            }
-
-            try {
-              saveLocalMessage(payload.roomId || roomId, sender || targetUser, plaintext, null, null, activeUserRef.current);
-            } catch (e) {
-              console.warn('[Chat] Could not persist message:', e);
-            }
-
-            return [...prev, {
+            const newMsg = {
               msgId: payload.msgId,
               sender_username: sender || targetUser,
-              content: plaintext,
+              content: plaintext || 'Message could not be verified',
               timestamp: new Date().toISOString(),
-            }];
-          });
+              undecryptable: plaintext === null,
+            };
 
+            if (plaintext !== null) {
+              try { saveLocalMessage(payload.roomId || roomId, sender || targetUser, plaintext, null, null, activeUserRef.current); } 
+              catch (e) { }
+            }
+
+            const updated = [...prev, newMsg];
+            return updated.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+          });
           scrollToEnd();
         });
       },
-
-      onDisconnect: () => {
-        setIsLinkActive(false);
-        setIsConnecting(true);
-      },
-      onWebSocketClose: () => {
-        setIsLinkActive(false);
-        setIsConnecting(true);
-      },
-      onStompError: (frame) => {
-        console.error('[Chat] Broker error:', frame.headers?.['message'], frame.body);
-        setIsLinkActive(false);
-        setIsConnecting(false);
-      },
+      onDisconnect: () => { setIsLinkActive(false); setIsConnecting(true); },
+      onWebSocketClose: () => { setIsLinkActive(false); setIsConnecting(true); },
+      onStompError: () => { setIsLinkActive(false); setIsConnecting(false); },
     });
 
     clientRef.current = client;
@@ -291,27 +239,21 @@ const connect = async (me: string) => {
   const loadLocalHistory = (roomId: string) => {
     try {
       const history = getLocalMessages(roomId);
-      setMessages(Array.isArray(history) ? history : []);
+      const sortedHistory = Array.isArray(history) 
+        ? history.sort((a: any, b: any) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime())
+        : [];
+      setMessages(sortedHistory);
       scrollToEnd(false);
-    } catch (e) {
-      console.warn('[Chat] Could not load local history:', e);
-      setMessages([]);
-    }
+    } catch (e) { setMessages([]); }
   };
 
-  const handleSend = async () => {
-    const text = chatInput.trim();
-
-    // Do not block sending if STOMP is reconnecting
-    if (!text || !activeUserRef.current || sending) return;
-    if (cryptoState !== 'ready') return;
-
+  const dispatchEncryptedPayload = async (textPayload: string) => {
     setSending(true);
     const roomId = roomIdRef.current;
     const clientMsgId = `${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
 
     try {
-      const envelope = await encryptForPeer(text, targetUser);
+      const envelope = await encryptForPeer(textPayload, targetUser);
       const payloadObj = {
         v: envelope.v,
         msgId: clientMsgId,
@@ -326,76 +268,135 @@ const connect = async (me: string) => {
         authTag: '',
       };
 
-      // Instantly drop the message into the SQLite DB and UI
-      saveLocalMessage(roomId, activeUserRef.current, text, null, null, targetUser);
+      saveLocalMessage(roomId, activeUserRef.current, textPayload, null, null, targetUser);
       setMessages((prev) => [...prev, {
         msgId: clientMsgId,
         sender_username: activeUserRef.current,
-        content: text,
+        content: textPayload,
         timestamp: new Date().toISOString(),
       }]);
-
+      
       setChatInput('');
       scrollToEnd();
 
-      // If online, send immediately. If offline, push to queue.
       const client = clientRef.current;
       if (client?.connected) {
-        client.publish({
-          destination: '/app/shadow/send',
-          body: JSON.stringify(payloadObj),
-        });
+        client.publish({ destination: '/app/shadow/send', body: JSON.stringify(payloadObj) });
       } else {
         pendingOutboundRef.current.push(payloadObj);
       }
-      
     } catch (e: any) {
-      if (e instanceof KeyChangedError) {
-        setCryptoState('key-changed');
-      } else if (e instanceof NoKeyError) {
-        setCryptoState('peer-has-no-key');
-      } else {
-        Alert.alert('Could not send', e?.message || 'Encryption failed.');
-      }
+      if (e instanceof KeyChangedError) setCryptoState('key-changed');
+      else if (e instanceof NoKeyError) setCryptoState('peer-has-no-key');
+      else Alert.alert('Could not send', e?.message || 'Encryption failed.');
     } finally {
       setSending(false);
     }
   };
 
-  const handleAcceptKeyChange = async () => {
-    try {
-      await acceptPeerKeyChange(targetUser);
-      setCryptoState('ready');
-    } catch {
-      setCryptoState('error');
+  const handleSend = () => {
+    const text = chatInput.trim();
+    if (!text || !activeUserRef.current || sending || isBlocked) return;
+    if (cryptoState !== 'ready') return;
+    dispatchEncryptedPayload(text);
+  };
+
+  const handleAttachment = async () => {
+    if (isBlocked) return;
+
+    if (Platform.OS === 'web') {
+      launchImagePicker();
+      return;
     }
+
+    Alert.alert(
+      'Attach File',
+      isPremium ? 'Select a photo or file to send.' : 'Free users can send compressed photos. Upgrade to Premium for uncompressed documents.',
+      [
+        { text: 'Send Photo', onPress: launchImagePicker },
+        { text: 'Send Document (Premium)', onPress: () => {
+            if(!isPremium) Alert.alert('Premium Required', 'Upgrade to send raw documents.');
+        }},
+        { text: 'Cancel', style: 'cancel' }
+      ]
+    );
+  };
+
+  const launchImagePicker = async () => {
+    let result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      allowsEditing: true,
+      quality: isPremium ? 0.5 : 0.1, 
+      base64: true, 
+    });
+    
+    if (!result.canceled && result.assets[0].base64) {
+      try {
+        const base64String = `data:image/jpeg;base64,${result.assets[0].base64}`;
+        
+        if (base64String.length > 700000) {
+          Alert.alert("Image Too Large", "Please pick a smaller image or crop it before sending.");
+          return;
+        }
+
+        await dispatchEncryptedPayload(`[B64_IMG]${base64String}`);
+      } catch (e: any) {
+        Alert.alert("Send Failed", "Could not send image.");
+      }
+    }
+  };
+
+  const handleMenuOptions = () => {
+    Alert.alert(
+      'Chat Options',
+      `Options for @${targetUser}`,
+      [
+        { text: 'Clear Local History', style: 'destructive', onPress: () => {
+            setMessages([]); 
+            Alert.alert('Cleared', 'Local history cleared.');
+        }},
+        { text: isBlocked ? 'Unblock User' : 'Block User', style: 'destructive', onPress: () => setIsBlocked(!isBlocked) },
+        { text: 'Cancel', style: 'cancel' }
+      ]
+    );
+  };
+
+  const handleAcceptKeyChange = async () => {
+    try { await acceptPeerKeyChange(targetUser); setCryptoState('ready'); } 
+    catch { setCryptoState('error'); }
   };
 
   const showSafetyNumber = async () => {
     const num = await safetyNumber(targetUser);
-    Alert.alert(
-      'Safety number',
-      num
-        ? `${num}\n\nCompare this with @${targetUser} in person or over a call you trust. If the numbers match, no one is intercepting your messages.`
-        : 'Not available until both of you have published keys.'
-    );
+    Alert.alert('Safety number', num ? `${num}\n\nCompare this with @${targetUser} in person.` : 'Not available yet.');
   };
 
   const formatTime = (isoString: string) => {
-    const date = new Date(isoString);
-    return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    try {
+      const date = new Date(isoString);
+      if (isNaN(date.getTime())) throw new Error();
+      return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    } catch {
+      return new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    }
   };
 
-  const canType = cryptoState === 'ready';
+  const canType = cryptoState === 'ready' && !isBlocked;
 
   const renderBanner = () => {
+    if (isBlocked) {
+      return (
+        <View style={[styles.banner, styles.bannerDanger]}>
+          <Feather name="slash" size={12} color="#FF3B30" />
+          <Text style={[styles.bannerText, { color: '#FF3B30' }]}> User is blocked. Messaging disabled.</Text>
+        </View>
+      );
+    }
     if (cryptoState === 'ready') {
       return (
         <TouchableOpacity style={[styles.banner, styles.bannerOk]} onPress={showSafetyNumber}>
           <Feather name="lock" size={12} color="#00C851" />
-          <Text style={[styles.bannerText, { color: '#00C851' }]}>
-            {' '}End-to-end encrypted. Tap to verify safety number.
-          </Text>
+          <Text style={[styles.bannerText, { color: '#00C851' }]}> End-to-end encrypted. Tap to verify.</Text>
         </TouchableOpacity>
       );
     }
@@ -403,9 +404,7 @@ const connect = async (me: string) => {
       return (
         <TouchableOpacity style={[styles.banner, styles.bannerDanger]} onPress={handleAcceptKeyChange}>
           <Feather name="alert-triangle" size={12} color="#FF3B30" />
-          <Text style={[styles.bannerText, { color: '#FF3B30' }]}>
-            {' '}@{targetUser}'s encryption key changed. Tap here to trust new key.
-          </Text>
+          <Text style={[styles.bannerText, { color: '#FF3B30' }]}> @{targetUser}'s key changed. Tap to trust.</Text>
         </TouchableOpacity>
       );
     }
@@ -413,9 +412,7 @@ const connect = async (me: string) => {
       return (
         <View style={[styles.banner, styles.bannerWarn]}>
           <Feather name="clock" size={12} color="#D1B000" />
-          <Text style={[styles.bannerText, { color: '#D1B000' }]}>
-            {' '}Waiting for @{targetUser} to publish encryption keys.
-          </Text>
+          <Text style={[styles.bannerText, { color: '#D1B000' }]}> Waiting for @{targetUser} to publish keys.</Text>
         </View>
       );
     }
@@ -430,7 +427,7 @@ const connect = async (me: string) => {
     return (
       <View style={[styles.banner, styles.bannerDanger]}>
         <Feather name="alert-triangle" size={12} color="#FF3B30" />
-        <Text style={[styles.bannerText, { color: '#FF3B30' }]}> Encryption unavailable. Messages cannot be sent.</Text>
+        <Text style={[styles.bannerText, { color: '#FF3B30' }]}> Encryption unavailable. Cannot send.</Text>
       </View>
     );
   };
@@ -439,28 +436,29 @@ const connect = async (me: string) => {
     <SafeAreaView style={styles.safeContainer} edges={['top']}>
       <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={styles.container}>
         <View style={styles.header}>
-          <TouchableOpacity
-            style={styles.backBtn}
-            onPress={() => (navigation.canGoBack() ? navigation.goBack() : navigation.navigate('MainTabs'))}
-          >
+          <TouchableOpacity style={styles.backBtn} onPress={() => (navigation.canGoBack() ? navigation.goBack() : navigation.navigate('MainTabs'))}>
             <Feather name="arrow-left" size={24} color="#FFFFFF" />
           </TouchableOpacity>
 
           <View style={styles.activeHeader}>
             <View style={styles.avatarPlaceholder}>
               {targetAvatar ? (
-                <Image source={{ uri: targetAvatar }} style={{ width: '100%', height: '100%' }} />
+                <Image source={getSecureImageSource(targetAvatar)} style={{ width: '100%', height: '100%' }} />
               ) : (
                 <Text style={styles.avatarText}>{targetUser ? targetUser[0]?.toUpperCase() : '?'}</Text>
               )}
             </View>
-            <View>
+            <View style={{ flex: 1 }}>
               <Text style={styles.headerTextActive}>@{targetUser || 'unknown'}</Text>
               <Text style={styles.statusText}>
                 {isConnecting ? 'connecting...' : isLinkActive ? 'connected' : 'offline'}
               </Text>
             </View>
           </View>
+
+          <TouchableOpacity onPress={handleMenuOptions} style={styles.menuBtn}>
+            <Feather name="more-vertical" size={20} color="#FFFFFF" />
+          </TouchableOpacity>
         </View>
 
         <ScrollView ref={scrollViewRef} style={styles.chatArea} contentContainerStyle={{ paddingBottom: 20 }}>
@@ -470,22 +468,44 @@ const connect = async (me: string) => {
             const msgSender = (msg.sender_username || '').trim().toLowerCase();
             const isMe = msgSender === activeUser;
 
+            const isBase64Image = msg.content && msg.content.startsWith('[B64_IMG]');
+            const base64DataUri = isBase64Image ? msg.content.replace('[B64_IMG]', '') : '';
+
             return (
               <View key={msg.msgId || idx} style={[styles.bubbleWrapper, isMe ? styles.myBubbleWrapper : styles.theirBubbleWrapper]}>
+                
+                {!isMe && (
+                  <View style={styles.chatAvatarContainer}>
+                    {targetAvatar ? (
+                      <Image source={getSecureImageSource(targetAvatar)} style={styles.chatAvatar} />
+                    ) : (
+                      <View style={styles.chatAvatarFallback}>
+                        <Text style={styles.chatAvatarText}>{targetUser[0]?.toUpperCase()}</Text>
+                      </View>
+                    )}
+                  </View>
+                )}
+
                 <View style={[
                   styles.bubble,
                   isMe ? styles.myBubble : styles.theirBubble,
                   msg.undecryptable ? styles.badBubble : null,
+                  isBase64Image ? { paddingHorizontal: 4, paddingVertical: 4 } : null
                 ]}>
+                  {isBase64Image ? (
+                    <Image source={{ uri: base64DataUri }} style={styles.chatImage} resizeMode="cover" />
+                  ) : (
+                    <Text style={[styles.bubbleText, { color: '#E9EDEF' }, msg.undecryptable ? styles.badBubbleText : null]}>
+                      {msg.content}
+                    </Text>
+                  )}
+
                   <Text style={[
-                    styles.bubbleText,
-                    { color: '#E9EDEF' },
-                    msg.undecryptable ? styles.badBubbleText : null,
+                    styles.timestamp, 
+                    isMe ? styles.myTimestamp : styles.theirTimestamp,
+                    isBase64Image ? styles.mediaTimestamp : null
                   ]}>
-                    {msg.content}
-                  </Text>
-                  <Text style={[styles.timestamp, isMe ? styles.myTimestamp : styles.theirTimestamp]}>
-                    {msg.timestamp ? formatTime(msg.timestamp) : formatTime(new Date().toISOString())}
+                    {formatTime(msg.timestamp)}
                   </Text>
                 </View>
               </View>
@@ -494,22 +514,26 @@ const connect = async (me: string) => {
         </ScrollView>
 
         <View style={[styles.inputRow, { paddingBottom: Math.max(12, insets.bottom) }]}>
+          <TouchableOpacity style={styles.attachBtn} onPress={handleAttachment}>
+            <Feather name="paperclip" size={20} color="#8E95A5" />
+          </TouchableOpacity>
+
           <TextInput
             style={styles.input}
             value={chatInput}
             onChangeText={setChatInput}
-            placeholder={cryptoState !== 'ready' ? 'Encryption syncing...' : 'Message...'}
+            placeholder={isBlocked ? 'User Blocked' : cryptoState !== 'ready' ? 'Encryption syncing...' : 'Message...'}
             placeholderTextColor="#666666"
             editable={canType}
             multiline
           />
 
           <TouchableOpacity
-            style={[styles.sendBtn, (!chatInput.trim() || !canType) && { backgroundColor: '#262626' }]}
+            style={[styles.sendBtn, (!chatInput.trim() || !canType) && { backgroundColor: '#1A1A1A' }]}
             onPress={handleSend}
             disabled={!canType || !chatInput.trim() || sending}
           >
-            <Feather name="send" size={20} color={chatInput.trim() && canType ? '#FFFFFF' : '#666666'} style={{ marginLeft: -2 }} />
+            <Feather name="send" size={18} color={chatInput.trim() && canType ? '#FFFFFF' : '#666666'} style={{ marginLeft: -2 }} />
           </TouchableOpacity>
         </View>
       </KeyboardAvoidingView>
@@ -522,30 +546,46 @@ const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#0A0A0A' },
   header: { flexDirection: 'row', alignItems: 'center', padding: 16, backgroundColor: '#1A1A1A', borderBottomWidth: 1, borderColor: '#262626' },
   backBtn: { marginRight: 16 },
-  activeHeader: { flexDirection: 'row', alignItems: 'center' },
+  activeHeader: { flexDirection: 'row', alignItems: 'center', flex: 1 },
   avatarPlaceholder: { width: 36, height: 36, borderRadius: 18, backgroundColor: '#262626', justifyContent: 'center', alignItems: 'center', marginRight: 12, overflow: 'hidden' },
   avatarText: { color: '#FFFFFF', fontWeight: 'bold', fontSize: 16 },
   headerTextActive: { fontSize: 16, fontWeight: '700', color: '#FFFFFF' },
   statusText: { fontSize: 11, color: '#00C851', fontWeight: '600' },
+  menuBtn: { padding: 4 },
+
   chatArea: { flex: 1, padding: 16 },
   banner: { flexDirection: 'row', padding: 10, borderRadius: 8, marginBottom: 20, alignItems: 'center', justifyContent: 'center' },
   bannerOk: { backgroundColor: 'rgba(0, 200, 81, 0.1)' },
   bannerWarn: { backgroundColor: 'rgba(209, 176, 0, 0.1)' },
   bannerDanger: { backgroundColor: 'rgba(255, 59, 48, 0.1)' },
   bannerText: { fontSize: 11, textAlign: 'center', fontWeight: '600', flexShrink: 1 },
-  bubbleWrapper: { marginBottom: 12, flexDirection: 'row', width: '100%' },
+  
+  bubbleWrapper: { marginBottom: 16, flexDirection: 'row', width: '100%', alignItems: 'flex-end' },
   myBubbleWrapper: { justifyContent: 'flex-end' },
   theirBubbleWrapper: { justifyContent: 'flex-start' },
-  bubble: { paddingHorizontal: 14, paddingVertical: 10, borderRadius: 16, maxWidth: '75%' },
-  myBubble: { backgroundColor: '#005C4B', borderTopRightRadius: 4 },
-  theirBubble: { backgroundColor: '#202C33', borderTopLeftRadius: 4 },
+  
+  chatAvatarContainer: { marginRight: 8, marginBottom: 4 },
+  chatAvatar: { width: 26, height: 26, borderRadius: 13 },
+  chatAvatarFallback: { width: 26, height: 26, borderRadius: 13, backgroundColor: '#262626', justifyContent: 'center', alignItems: 'center' },
+  chatAvatarText: { color: '#8E95A5', fontSize: 12, fontWeight: 'bold' },
+
+  bubble: { paddingHorizontal: 14, paddingVertical: 10, maxWidth: '75%' },
+  myBubble: { backgroundColor: '#333333', borderTopLeftRadius: 16, borderTopRightRadius: 4, borderBottomLeftRadius: 16, borderBottomRightRadius: 16 },
+  theirBubble: { backgroundColor: '#1A1A1A', borderTopLeftRadius: 4, borderTopRightRadius: 16, borderBottomRightRadius: 16, borderBottomLeftRadius: 16 },
   badBubble: { backgroundColor: '#2A1A1A', borderWidth: 1, borderColor: '#5C2A2A' },
+  
   bubbleText: { fontSize: 15, lineHeight: 20 },
   badBubbleText: { color: '#FF8A80', fontStyle: 'italic' },
+  
+  chatImage: { width: 220, height: 220, borderRadius: 12, backgroundColor: '#262626' },
+  mediaTimestamp: { position: 'absolute', bottom: 10, right: 12, color: '#FFFFFF', backgroundColor: 'rgba(0,0,0,0.6)', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 8, overflow: 'hidden' },
+
   timestamp: { fontSize: 10, alignSelf: 'flex-end', marginTop: 4, marginLeft: 12 },
   myTimestamp: { color: 'rgba(255,255,255,0.6)' },
   theirTimestamp: { color: 'rgba(255,255,255,0.5)' },
+  
   inputRow: { flexDirection: 'row', alignItems: 'flex-end', padding: 12, backgroundColor: '#1A1A1A' },
-  input: { flex: 1, backgroundColor: '#2A2F32', borderRadius: 24, paddingHorizontal: 16, paddingTop: 12, paddingBottom: 12, color: '#FFFFFF', fontSize: 15, maxHeight: 100, minHeight: 48 },
-  sendBtn: { backgroundColor: '#00A884', width: 48, height: 48, borderRadius: 24, justifyContent: 'center', alignItems: 'center', marginLeft: 8 },
+  attachBtn: { width: 44, height: 44, justifyContent: 'center', alignItems: 'center', marginRight: 4 },
+  input: { flex: 1, backgroundColor: '#262626', borderRadius: 24, paddingHorizontal: 16, paddingTop: 12, paddingBottom: 12, color: '#FFFFFF', fontSize: 15, maxHeight: 100, minHeight: 44 },
+  sendBtn: { backgroundColor: '#333333', width: 44, height: 44, borderRadius: 22, justifyContent: 'center', alignItems: 'center', marginLeft: 8 },
 });

@@ -1,18 +1,28 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { Platform } from 'react-native';
 
-export const BASE_URL = Platform.OS === 'android' ? 'https://mode-production-6bbb.up.railway.app' : 'https://mode-production-6bbb.up.railway.app';
+// 🟢 DYNAMIC ENVIRONMENT CONFIGURATION
+const DEFAULT_URL = 'https://mode-production-6bbb.up.railway.app';
+export const BASE_URL = process.env.EXPO_PUBLIC_API_BASE_URL || DEFAULT_URL;
 
-// TODO: move Gemini calls behind the Communities backend. Any key placed here
-// ships inside the APK and can be extracted from the JS bundle in seconds.
-const GEMINI_API_KEY = 'YOUR_GEMINI_API_KEY_HERE';
+// Convert base HTTP/HTTPS URL into WSS/WS for WebSockets automatically
+const getWsUrl = (baseUrl: string) => {
+  const cleanUrl = baseUrl.replace(/\/$/, '');
+  if (cleanUrl.startsWith('https://')) {
+    return cleanUrl.replace('https://', 'wss://') + '/v1/ws';
+  }
+  return cleanUrl.replace('http://', 'ws://') + '/v1/ws';
+};
 
-// TODO: this value is baked into every build, so it cannot authenticate the
-// client. Treat the gateway shield as obfuscation, not security.
-const SHIELD_KEY = 'PermanentSecret999';
+export const P2P_WS_URL = getWsUrl(BASE_URL);
 
+const GEMINI_API_KEY = process.env.EXPO_PUBLIC_GEMINI_API_KEY || 'YOUR_GEMINI_API_KEY_HERE';
+const SHIELD_KEY = process.env.EXPO_PUBLIC_SHIELD_KEY || '';
+
+if (!SHIELD_KEY) {
+  console.warn("⚠️ EXPO_PUBLIC_SHIELD_KEY is missing from .env!");
+}
 let onSessionExpiredCallback: (() => void) | null = null;
-export const P2P_WS_URL = 'wss://p2p-service-production-70d9.up.railway.app/ws-chat';
+
 export const setSessionExpiredHandler = (handler: () => void) => {
   onSessionExpiredCallback = handler;
 };
@@ -22,20 +32,6 @@ const wipeSession = async () => {
   if (onSessionExpiredCallback) onSessionExpiredCallback();
 };
 
-/**
- * Multipart upload over XMLHttpRequest.
- *
- * WHY NOT fetch(): this app's global `fetch` is expo/fetch, a spec-compliant
- * implementation that rejects React Native's non-standard
- * `{ uri, name, type }` FormData part with
- * "Unsupported FormDataPart implementation". React Native's XMLHttpRequest
- * talks straight to the native networking module, which understands that shape
- * and streams the file from disk. This works regardless of which fetch is
- * installed globally.
- *
- * Content-Type is deliberately never set so the native layer can generate the
- * multipart boundary itself.
- */
 export const uploadMultipart = (
   endpoint: string,
   formData: FormData,
@@ -73,7 +69,9 @@ export const uploadMultipart = (
       }
 
       if (xhr.status === 401 || xhr.status === 403) {
-        await wipeSession();
+        if (endpoint.includes('/auth/')) {
+          await wipeSession();
+        }
         return reject(new Error('Session expired. Please log in again.'));
       }
 
@@ -96,11 +94,6 @@ export const uploadMultipart = (
   });
 };
 
-/**
- * Build the file part for a picker asset.
- * Keeps the uri untouched: stripping file:// on iOS breaks the native uploader,
- * and Android needs whatever scheme the picker returned.
- */
 export const buildFilePart = (asset: { uri: string; fileName?: string | null; mimeType?: string | null }) => {
   const name = asset.fileName || asset.uri.split('/').pop() || 'upload.jpg';
   const ext = name.split('.').pop()?.toLowerCase();
@@ -123,14 +116,9 @@ export const apiClient = {
     const token = await AsyncStorage.getItem('@ghost_token');
     const headers = new Headers(options.headers || {});
 
-    // Duck-typing check for FormData. instanceof is unreliable here because
-    // more than one FormData implementation exists in the bundle.
     const isFormData = options.body != null && typeof (options.body as any).append === 'function';
 
     if (isFormData) {
-      // Reaching here means a caller tried to send multipart through the JSON
-      // client. The global fetch cannot do that. Fail loudly rather than
-      // producing a confusing "Unsupported FormData implementation".
       throw new Error(
         `Use uploadMultipart() for multipart requests, not apiClient (endpoint: ${endpoint}).`
       );
@@ -139,14 +127,13 @@ export const apiClient = {
     headers.set('Content-Type', 'application/json');
     headers.set('X-Ghost-Shield-Key', SHIELD_KEY);
 
-    const isAuthRoute = (
+    const isAuthRoute =
       endpoint.includes('/auth/login') ||
       endpoint.includes('/auth/register') ||
       endpoint.includes('/auth/check-username') ||
       endpoint.includes('/auth/verify-otp') ||
       endpoint.includes('/auth/forgot-password') ||
-      endpoint.includes('/auth/reset-password')
-    );
+      endpoint.includes('/auth/reset-password');
 
     if (token && !isAuthRoute) {
       headers.set('Authorization', `Bearer ${token}`);
@@ -158,7 +145,9 @@ export const apiClient = {
       const response = await fetch(url, config);
 
       if (response.status === 401 || response.status === 403) {
-        await wipeSession();
+        if (endpoint.includes('/auth/me') || endpoint.includes('/auth/login')) {
+          await wipeSession();
+        }
         throw new Error("Session expired. Please log in again.");
       }
 
@@ -193,7 +182,7 @@ export const apiClient = {
     return this.request(endpoint, {
       ...options,
       method: 'POST',
-      body: body ? JSON.stringify(body) : undefined
+      body: body ? JSON.stringify(body) : undefined,
     });
   },
 
@@ -205,7 +194,7 @@ export const apiClient = {
     return this.request(endpoint, {
       ...options,
       method: 'PUT',
-      body: body ? JSON.stringify(body) : undefined
+      body: body ? JSON.stringify(body) : undefined,
     });
   },
 
@@ -215,11 +204,10 @@ export const apiClient = {
 
   async askGemini(prompt: string, systemInstruction?: string) {
     if (!GEMINI_API_KEY || GEMINI_API_KEY === 'YOUR_GEMINI_API_KEY_HERE') {
-      throw new Error("Missing Gemini API Key in api.ts");
+      throw new Error("Missing Gemini API Key");
     }
 
     const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${GEMINI_API_KEY}`;
-
     const payload: any = { contents: [{ parts: [{ text: prompt }] }] };
     if (systemInstruction) payload.systemInstruction = { parts: [{ text: systemInstruction }] };
 
@@ -227,7 +215,7 @@ export const apiClient = {
       const response = await fetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
+        body: JSON.stringify(payload),
       });
 
       const data = await response.json();
@@ -237,7 +225,7 @@ export const apiClient = {
       console.error("Gemini API Error:", err.message);
       throw err;
     }
-  }
+  },
 };
 
 export const systemLogout = async () => {

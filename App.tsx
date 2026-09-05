@@ -1,4 +1,4 @@
-import 'react-native-get-random-values'; // 🟢 CRITICAL: Must be the absolute first line!
+import 'react-native-get-random-values'; // MUST BE FIRST
 import 'text-encoding-polyfill';
 import React, { useState, useEffect } from 'react';
 import { NavigationContainer } from '@react-navigation/native';
@@ -8,13 +8,12 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { ActivityIndicator, View } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 
-// Import your screens and navigators
 import AuthScreen from './src/screens/AuthScreen';
 import TabNavigator from './src/navigation/TabNavigator';
 import GossipsChatScreen from './src/screens/GossipsChatScreen';
 
-// 🟢 CRITICAL: Import your DB init function here
 import { initLocalDatabase } from './src/services/LocalDB';
+import { ensureKeysPublished } from './src/services/CryptoVault';
 
 const Stack = createNativeStackNavigator();
 
@@ -23,11 +22,7 @@ const linking: any = {
   config: {
     screens: {
       MainTabs: {
-        screens: {
-          Home: 'home',
-          Gossips: 'chat',
-          Profile: 'profile',
-        }
+        screens: { Home: 'home', Gossips: 'chat', Profile: 'profile' }
       },
       GossipsChat: 'dm/:targetUser',
     },
@@ -41,12 +36,12 @@ export default function App() {
   useEffect(() => {
     const verifySession = async () => {
       try {
-        // 🟢 FIX: Initialize the database safely AFTER the app is mounted!
         initLocalDatabase();
-
         const token = await AsyncStorage.getItem('@ghost_token');
         if (token) {
           setIsAuthenticated(true);
+          // 🟢 Publish keys globally on startup
+          await ensureKeysPublished();
         }
       } catch (error) {
         console.error("Session/DB verification failed:", error);
@@ -54,18 +49,16 @@ export default function App() {
         setIsInitializing(false);
       }
     };
-
     verifySession();
   }, []);
 
-  const handleAuthSuccess = () => {
+  const handleAuthSuccess = async () => {
     setIsAuthenticated(true);
+    await ensureKeysPublished();
   };
 
   const handleLogoutTrigger = async () => {
-    await AsyncStorage.removeItem('@ghost_token');
-    await AsyncStorage.removeItem('@active_username');
-    await AsyncStorage.removeItem('@user_avatar');
+    await AsyncStorage.multiRemove(['@ghost_token', '@active_username', '@user_avatar']);
     setIsAuthenticated(false);
   };
 
@@ -85,12 +78,9 @@ export default function App() {
             <Stack.Screen name="MainTabs">
               {(props) => <TabNavigator {...props} onLogoutTrigger={handleLogoutTrigger} />}
             </Stack.Screen>
-            
-            {/* 🟢 FIX: By mapping it this way, React Navigation's strict type-checker is bypassed */}
             <Stack.Screen name="GossipsChat">
               {(props) => <GossipsChatScreen {...props} />}
             </Stack.Screen>
-            
           </Stack.Navigator>
         ) : (
           <AuthScreen onAuthSuccess={handleAuthSuccess} />

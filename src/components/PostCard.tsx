@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { StyleSheet, Text, View, Image, TouchableOpacity, Share, Alert, Modal, Pressable, Platform } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { useVideoPlayer, VideoView } from 'expo-video';
@@ -29,6 +29,7 @@ export default function PostCard({ post, currentUsername: propUsername, onDelete
   const [isSpeeding, setIsSpeeding] = useState(false);
   const [aspectRatio, setAspectRatio] = useState<number>(16 / 9);
   const [authToken, setAuthToken] = useState<string | null>(null);
+  const [shieldKey, setShieldKey] = useState<string>('PermanentSecret999');
   
   const [activeUsername, setActiveUsername] = useState<string | undefined>(propUsername);
 
@@ -39,6 +40,8 @@ export default function PostCard({ post, currentUsername: propUsername, onDelete
 
   useEffect(() => {
     AsyncStorage.getItem('@ghost_token').then(token => setAuthToken(token));
+    setShieldKey(process.env.EXPO_PUBLIC_SHIELD_KEY || 'PermanentSecret999');
+
     if (!propUsername) {
       AsyncStorage.getItem('@active_username').then(user => {
         if (user) setActiveUsername(user);
@@ -57,7 +60,22 @@ export default function PostCard({ post, currentUsername: propUsername, onDelete
   const displayAvatar = post.avatarUrl || post.profilePictureUrl || null; 
   const isOwner = activeUsername && (post.username === activeUsername); 
 
-  const player = useVideoPlayer(fullMediaUrl, (playerInstance) => { playerInstance.loop = true; });
+  // 🟢 FIX 1: Properly structure the authenticated media source for the Gateway
+  const authenticatedMediaSource = useMemo(() => {
+    if (!fullMediaUrl) return null;
+    const headers: Record<string, string> = {
+      'X-Ghost-Shield-Key': shieldKey
+    };
+    if (authToken) {
+      headers['Authorization'] = `Bearer ${authToken}`;
+    }
+    return { uri: fullMediaUrl, headers };
+  }, [fullMediaUrl, authToken, shieldKey]);
+
+  // 🟢 Inject the authenticated object, not just the raw string
+  const player = useVideoPlayer(authenticatedMediaSource, (playerInstance) => { 
+    if (playerInstance) playerInstance.loop = true; 
+  });
 
   const handleVote = async (direction: 'up' | 'down') => {
     if (isVoting) return;
@@ -91,40 +109,21 @@ export default function PostCard({ post, currentUsername: propUsername, onDelete
     }
   };
 
-  // 🟢 FIX: Platform-safe deletion with aggressive diagnostic logging
   const handleDeleteTrigger = () => {
-    console.log("🚨 TRASHCAN TAPPED! Post ID:", post.id);
-
-    // If testing on Web, native Alert.alert often fails silently. This uses the browser's native confirm.
     if (Platform.OS === 'web') {
       const isConfirmed = window.confirm("Are you sure you want to permanently delete this post? All comments and media will be wiped.");
       if (isConfirmed) {
-        console.log("✅ Web confirm accepted. Firing deletion request to backend...");
         if (onDelete) onDelete(post.id);
-      } else {
-        console.log("❌ Web confirm cancelled.");
       }
       return;
     }
 
-    // iOS / Android Native Alert
     Alert.alert(
       "Delete Post", 
       "Are you sure you want to permanently delete this post? All comments, votes, and media will be wiped. This cannot be undone.", 
       [
-        { 
-          text: "Cancel", 
-          style: "cancel",
-          onPress: () => console.log("❌ Mobile Alert cancelled.")
-        },
-        { 
-          text: "Yes, Delete", 
-          style: "destructive", 
-          onPress: () => { 
-            console.log("✅ Mobile Alert confirmed. Firing deletion request to backend...");
-            if (onDelete) onDelete(post.id); 
-          } 
-        }
+        { text: "Cancel", style: "cancel" },
+        { text: "Yes, Delete", style: "destructive", onPress: () => { if (onDelete) onDelete(post.id); } }
       ]
     );
   };
@@ -132,14 +131,19 @@ export default function PostCard({ post, currentUsername: propUsername, onDelete
   const renderAvatar = (url: string | null, fallbackUsername: string) => {
     if (url) {
       const formattedUrl = url.startsWith('http') ? url : `${BASE_URL}${url}`;
-      return <Image source={{ uri: formattedUrl, headers: authToken ? { Authorization: `Bearer ${authToken}` } : undefined }} style={styles.smallAvatarImage} />;
+      return <Image 
+        source={{ 
+          uri: formattedUrl, 
+          headers: authToken ? { Authorization: `Bearer ${authToken}`, 'X-Ghost-Shield-Key': shieldKey } : undefined
+        }} 
+        style={styles.smallAvatarImage} 
+      />;
     }
     return <Text style={styles.avatarLetter}>{fallbackUsername[0]?.toUpperCase() || 'U'}</Text>;
   };
 
   return (
     <View style={styles.card}>
-      {/* 🟢 FIX: Added zIndex to header to prevent absolute positioning overlap blocking taps */}
       <View style={[styles.cardHeader, { zIndex: 10 }]}>
         <View style={styles.authorRow}>
           <View style={styles.smallAvatar}>
@@ -149,7 +153,6 @@ export default function PostCard({ post, currentUsername: propUsername, onDelete
         </View>
 
         {isOwner && onDelete && (
-          // 🟢 FIX: Increased touch target padding and hitSlop for easier tapping
           <TouchableOpacity 
             onPress={handleDeleteTrigger} 
             style={styles.deleteBtn}
@@ -172,11 +175,12 @@ export default function PostCard({ post, currentUsername: propUsername, onDelete
               style={{ width: '100%' }}
             >
               <VideoView player={player} style={[styles.mediaElement, { aspectRatio: 16 / 9 }]} nativeControls={true} contentFit="contain" />
-              {isSpeeding && <View style={[styles.speedBadge, { pointerEvents: 'none' }]}><Text style={styles.speedText}>[ 2X SPEED ]</Text></View>}
+              {/* 🟢 FIX 2: pointerEvents must be a direct prop, not buried inside style! */}
+              {isSpeeding && <View style={styles.speedBadge} pointerEvents="none"><Text style={styles.speedText}>[ 2X SPEED ]</Text></View>}
             </Pressable>
           ) : (
             <Image
-              source={{ uri: fullMediaUrl, headers: authToken ? { Authorization: `Bearer ${authToken}` } : undefined }}
+              source={authenticatedMediaSource as any}
               style={[styles.mediaElement, { aspectRatio: Math.max(0.8, Math.min(aspectRatio, 2)) }]}
               resizeMode="cover"
             />
@@ -189,9 +193,7 @@ export default function PostCard({ post, currentUsername: propUsername, onDelete
           <TouchableOpacity onPress={() => handleVote('up')} style={styles.actionBtn}>
             <Feather name="chevron-up" size={22} color={userVote === 'up' ? '#00C851' : '#666666'} />
           </TouchableOpacity>
-          
           <Text style={styles.voteText}>{votes}</Text>
-          
           <TouchableOpacity onPress={() => handleVote('down')} style={styles.actionBtn}>
             <Feather name="chevron-down" size={22} color={userVote === 'down' ? '#FF4444' : '#666666'} />
           </TouchableOpacity>
@@ -228,7 +230,6 @@ const styles = StyleSheet.create({
   smallAvatarImage: { width: '100%', height: '100%' },
   avatarLetter: { color: '#FFFFFF', fontWeight: '900', fontSize: 14 },
   authorName: { color: '#FFFFFF', fontWeight: '700', fontSize: 14, letterSpacing: 0.5 },
-  // 🟢 FIX: Added zIndex here to ensure the button is clickable
   deleteBtn: { padding: 8, backgroundColor: 'rgba(255, 68, 68, 0.1)', borderRadius: 8, zIndex: 20 },
   postTitle: { color: '#FFFFFF', fontSize: 16, fontWeight: '800', marginBottom: 8, letterSpacing: 0.5 },
   postContent: { color: '#8E95A5', fontSize: 14, lineHeight: 20, marginBottom: 16 },

@@ -10,8 +10,6 @@ export default function CreateDirectiveScreen({ navigation }: any) {
   const [postTitle, setPostTitle] = useState('');
   const [postContent, setPostContent] = useState('');
   const [mediaUri, setMediaUri] = useState('');
-  // Held alongside mediaUri so the picker's real mimeType and fileName survive
-  // to upload time instead of being guessed from the extension.
   const [mediaAsset, setMediaAsset] = useState<any>(null);
 
   const [metaMatrix, setMetaMatrix] = useState<any[]>([]);
@@ -253,17 +251,14 @@ const styles = StyleSheet.create({
   container: { flex: 1, paddingHorizontal: 24, paddingVertical: 16, backgroundColor: '#000000' },
   title: { fontSize: 18, fontWeight: '900', color: '#666666', marginBottom: 24, letterSpacing: 2 },
   label: { fontSize: 12, fontWeight: '800', color: '#666666', marginBottom: 12, letterSpacing: 1 },
-
   inputWrapper: { position: 'relative', marginBottom: 16 },
   input: { backgroundColor: '#1A1A1A', color: '#FFFFFF', padding: 16, borderRadius: 8, borderWidth: 1, borderColor: '#262626', fontSize: 15, fontWeight: '600' },
   charCounter: { position: 'absolute', bottom: 12, right: 12, fontSize: 10, fontWeight: '800', color: '#666666', letterSpacing: 1 },
   charCounterLimit: { color: '#FF4444' },
-
   dropdownTrigger: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#1A1A1A', borderRadius: 8, padding: 16, borderWidth: 1, borderColor: '#262626', marginBottom: 24 },
   dropdownTriggerIcon: { fontSize: 18, marginRight: 10 },
   dropdownTriggerText: { flex: 1, color: '#FFFFFF', fontSize: 14, fontWeight: '800', letterSpacing: 1 },
   dropdownTriggerArrow: { color: '#666666', fontSize: 12, fontWeight: '900' },
-
   modalContainer: { flex: 1, backgroundColor: '#000000' },
   modalHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', padding: 16, borderBottomWidth: 1, borderBottomColor: '#262626' },
   closeBtn: { color: '#666666', fontWeight: '800', padding: 10 },
@@ -272,7 +267,6 @@ const styles = StyleSheet.create({
   cityListItem: { padding: 16, borderBottomWidth: 1, borderBottomColor: '#1A1A1A' },
   cityListItemText: { color: '#FFFFFF', fontWeight: '700', letterSpacing: 1 },
   cityListSubText: { color: '#666666', fontSize: 10, marginTop: 4, fontWeight: '600', letterSpacing: 1 },
-
   mediaBtn: { flexDirection: 'row', padding: 16, borderRadius: 8, borderWidth: 1, borderColor: '#262626', backgroundColor: '#1A1A1A', alignItems: 'center', justifyContent: 'center', marginBottom: 24 },
   mediaBtnActive: { borderColor: '#34C759', backgroundColor: 'rgba(52, 199, 89, 0.05)' },
   mediaBtnText: { fontWeight: '800', color: '#666666', letterSpacing: 1 },

@@ -17,6 +17,7 @@ export default function ProfileScreen({ navigation, onLogoutTrigger }: any) {
   const [authToken, setAuthToken] = useState<string | null>(null);
   const [currentUsername, setCurrentUsername] = useState<string>('loading...');
   const [uploadPercent, setUploadPercent] = useState<number | null>(null);
+  const [imageError, setImageError] = useState(false);
 
   useEffect(() => {
     const loadSessionData = async () => {
@@ -95,6 +96,7 @@ export default function ProfileScreen({ navigation, onLogoutTrigger }: any) {
     const asset = result.assets[0];
     const previousAvatar = avatarUri;
     setAvatarUri(asset.uri);
+    setImageError(false);
     setUploadPercent(0);
 
     try {
@@ -115,14 +117,14 @@ export default function ProfileScreen({ navigation, onLogoutTrigger }: any) {
         setUploadPercent
       );
 
-      if (updateRes?.avatarUrl) {
-        setAvatarUri(updateRes.avatarUrl);
-        await AsyncStorage.setItem('@user_avatar', updateRes.avatarUrl);
+      const newAvatarUrl = updateRes?.avatarUrl || updateRes?.profilePictureUrl || updateRes?.url;
+
+      if (newAvatarUrl) {
+        setAvatarUri(newAvatarUrl);
+        await AsyncStorage.setItem('@user_avatar', newAvatarUrl);
       }
       Alert.alert("Success", "Profile picture updated globally.");
     } catch (e: any) {
-      // Roll the optimistic preview back so the UI does not claim a picture
-      // that never reached the server.
       setAvatarUri(previousAvatar);
       Alert.alert("Upload Failed", e.message || "Could not update profile picture.");
     } finally {
@@ -140,9 +142,18 @@ export default function ProfileScreen({ navigation, onLogoutTrigger }: any) {
     }
   };
 
-  const fullAvatarUrl = avatarUri?.startsWith('http') || avatarUri?.startsWith('file://') || avatarUri?.startsWith('data:')
-    ? avatarUri
-    : `${BASE_URL}${avatarUri}`;
+  // 🟢 SAFELY PARSES CAPABILITY URLS PRODUCED BY THE BACKEND
+  const getFullAvatarUrl = (uri: string | null) => {
+    if (!uri) return null;
+    if (uri.startsWith('http://') || uri.startsWith('https://') || uri.startsWith('file://') || uri.startsWith('data:') || uri.startsWith('blob:')) {
+      return uri;
+    }
+    const cleanBase = BASE_URL.endsWith('/') ? BASE_URL.slice(0, -1) : BASE_URL;
+    const cleanPath = uri.startsWith('/') ? uri : `/${uri}`;
+    return `${cleanBase}${cleanPath}`;
+  };
+
+  const fullAvatarUrl = getFullAvatarUrl(avatarUri);
 
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
@@ -162,8 +173,18 @@ export default function ProfileScreen({ navigation, onLogoutTrigger }: any) {
           <View style={styles.profileHeaderContainer}>
             <View style={styles.avatarWrapper}>
               <View style={styles.avatarGlow}>
-                {avatarUri ? (
-                  <Image source={{ uri: fullAvatarUrl, headers: authToken ? { Authorization: `Bearer ${authToken}` } : undefined }} style={styles.avatarImage} />
+                {fullAvatarUrl && !imageError ? (
+                  <Image
+                    source={{
+                      uri: fullAvatarUrl,
+                      headers: authToken ? { Authorization: `Bearer ${authToken}` } : undefined,
+                    }}
+                    style={styles.avatarImage}
+                    onError={(err) => {
+                      console.warn("Avatar load failed:", fullAvatarUrl, err.nativeEvent.error);
+                      setImageError(true);
+                    }}
+                  />
                 ) : (
                   <Feather name="user" size={48} color="#4A5060" />
                 )}

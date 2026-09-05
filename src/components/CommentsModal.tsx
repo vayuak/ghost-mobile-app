@@ -76,7 +76,6 @@ export default function CommentsModal({ postId, currentUsername: propUsername, o
   const executeDelete = async (commentId: number) => {
     try {
       await apiClient.delete(`/v1/social/post/comment/${commentId}`);
-      // Optimistically clear from local state instantly
       setComments(current => current.filter(c => String(c.id) !== String(commentId)));
       onCommentDeleted(); 
     } catch (error: any) {
@@ -90,7 +89,6 @@ export default function CommentsModal({ postId, currentUsername: propUsername, o
   };
 
   const handleDeleteComment = (commentId: number) => {
-    // 🟢 Platform check to guarantee deletion triggers on both web and native platforms
     if (Platform.OS === 'web') {
       if (window.confirm("Are you sure you want to delete this comment?")) {
         executeDelete(commentId);
@@ -110,7 +108,10 @@ export default function CommentsModal({ postId, currentUsername: propUsername, o
   const renderAvatar = (url: string | null, fallbackUsername: string) => {
     if (url) {
       const formattedUrl = url.startsWith('http') ? url : `${BASE_URL}${url}`;
-      return <Image source={{ uri: formattedUrl }} style={{ width: 28, height: 28, borderRadius: 14, marginRight: 10, backgroundColor: '#262626' }} />;
+      return <Image 
+        source={{ uri: formattedUrl }} 
+        style={{ width: 28, height: 28, borderRadius: 14, marginRight: 10, backgroundColor: '#262626' }} 
+      />;
     }
     return (
       <View style={{ width: 28, height: 28, borderRadius: 14, backgroundColor: '#262626', justifyContent: 'center', alignItems: 'center', marginRight: 10 }}>
