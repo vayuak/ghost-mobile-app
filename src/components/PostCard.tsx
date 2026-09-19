@@ -3,13 +3,15 @@ import { StyleSheet, Text, View, Image, TouchableOpacity, Share, Alert, Modal, P
 import { Feather } from '@expo/vector-icons';
 import { useVideoPlayer, VideoView } from 'expo-video';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { apiClient, BASE_URL } from '../services/api';
+import { apiClient, BASE_URL, API_ROUTES } from '../services/api'; 
 import CommentsModal from './CommentsModal';
 
 interface PostCardProps {
   post: any;
   currentUsername?: string;
   onDelete?: (postId: any) => void;
+  isVisible?: boolean; // 🟢 Added this
+  onUserTap?: () => void; // 🟢 Added this
 }
 
 const parseNumeric = (val: any) => {
@@ -19,7 +21,7 @@ const parseNumeric = (val: any) => {
   return parseInt(String(val).replace(/[^0-9-]/g, ''), 10) || 0;
 };
 
-export default function PostCard({ post, currentUsername: propUsername, onDelete }: PostCardProps) {
+export default function PostCard({ post, currentUsername: propUsername, onDelete, isVisible = true, onUserTap }: PostCardProps) {
   const [isVoting, setIsVoting] = useState(false); 
   const [votes, setVotes] = useState<number>(parseNumeric(post.score ?? post.upvotes));
   const [userVote, setUserVote] = useState<'up' | 'down' | null>(post.currentUserVote || null);
@@ -27,7 +29,6 @@ export default function PostCard({ post, currentUsername: propUsername, onDelete
   
   const [commentsVisible, setCommentsVisible] = useState(false);
   const [isSpeeding, setIsSpeeding] = useState(false);
-  const [aspectRatio, setAspectRatio] = useState<number>(16 / 9);
   const [authToken, setAuthToken] = useState<string | null>(null);
   const [shieldKey, setShieldKey] = useState<string>('PermanentSecret999');
   
@@ -41,11 +42,8 @@ export default function PostCard({ post, currentUsername: propUsername, onDelete
   useEffect(() => {
     AsyncStorage.getItem('@ghost_token').then(token => setAuthToken(token));
     setShieldKey(process.env.EXPO_PUBLIC_SHIELD_KEY || 'PermanentSecret999');
-
     if (!propUsername) {
-      AsyncStorage.getItem('@active_username').then(user => {
-        if (user) setActiveUsername(user);
-      });
+      AsyncStorage.getItem('@active_username').then(user => { if (user) setActiveUsername(user); });
     } else {
       setActiveUsername(propUsername);
     }
@@ -60,27 +58,28 @@ export default function PostCard({ post, currentUsername: propUsername, onDelete
   const displayAvatar = post.avatarUrl || post.profilePictureUrl || null; 
   const isOwner = activeUsername && (post.username === activeUsername); 
 
-  // 🟢 FIX 1: Properly structure the authenticated media source for the Gateway
   const authenticatedMediaSource = useMemo(() => {
     if (!fullMediaUrl) return null;
-    const headers: Record<string, string> = {
-      'X-Ghost-Shield-Key': shieldKey
-    };
-    if (authToken) {
-      headers['Authorization'] = `Bearer ${authToken}`;
-    }
+    const headers: Record<string, string> = { 'X-Ghost-Shield-Key': shieldKey };
+    if (authToken) headers['Authorization'] = `Bearer ${authToken}`;
     return { uri: fullMediaUrl, headers };
   }, [fullMediaUrl, authToken, shieldKey]);
 
-  // 🟢 Inject the authenticated object, not just the raw string
   const player = useVideoPlayer(authenticatedMediaSource, (playerInstance) => { 
     if (playerInstance) playerInstance.loop = true; 
   });
 
+  // 🟢 Start/Stop video based on scroll visibility
+  useEffect(() => {
+    if (isVideo && player) {
+      if (isVisible) player.play();
+      else player.pause();
+    }
+  }, [isVisible, isVideo, player]);
+
   const handleVote = async (direction: 'up' | 'down') => {
     if (isVoting) return;
     setIsVoting(true);
-    
     const isUp = direction === 'up';
     const newVoteState = userVote === direction ? null : direction;
     let diff = userVote === direction ? (isUp ? -1 : 1) : (userVote === null ? (isUp ? 1 : -1) : (isUp ? 2 : -2));
@@ -89,55 +88,35 @@ export default function PostCard({ post, currentUsername: propUsername, onDelete
     setUserVote(newVoteState);
 
     try {
-      await apiClient.post(`/v1/social/post/${post.id}/vote?direction=${newVoteState || 'none'}`);
+      await apiClient.post(API_ROUTES.POST.VOTE(post.id, newVoteState || 'none'));
     } catch (err) {
       setVotes(prev => prev - diff);
       setUserVote(userVote);
-    } finally { 
-      setIsVoting(false); 
-    }
+    } finally { setIsVoting(false); }
   };
 
   const handleShare = async () => {
     try {
       const shareUrl = `ghostshield://post/${post.id}`;
-      await Share.share({ 
-        message: `Check out this post by @${displayUsername} on GhostShield!\n\n"${post.title || post.content}"\n\nTap to view: ${shareUrl}` 
-      });
-    } catch (error) {
-      console.warn("Share logic failed");
-    }
+      await Share.share({ message: `Check out this post by @${displayUsername} on GhostShield!\n\n"${post.title || post.content}"\n\nTap to view: ${shareUrl}` });
+    } catch (error) { console.warn("Share logic failed"); }
   };
 
   const handleDeleteTrigger = () => {
     if (Platform.OS === 'web') {
-      const isConfirmed = window.confirm("Are you sure you want to permanently delete this post? All comments and media will be wiped.");
-      if (isConfirmed) {
-        if (onDelete) onDelete(post.id);
-      }
+      if (window.confirm("Are you sure you want to permanently delete this post?")) if (onDelete) onDelete(post.id);
       return;
     }
-
-    Alert.alert(
-      "Delete Post", 
-      "Are you sure you want to permanently delete this post? All comments, votes, and media will be wiped. This cannot be undone.", 
-      [
-        { text: "Cancel", style: "cancel" },
-        { text: "Yes, Delete", style: "destructive", onPress: () => { if (onDelete) onDelete(post.id); } }
-      ]
-    );
+    Alert.alert("Delete Post", "Are you sure you want to permanently delete this post?", [
+      { text: "Cancel", style: "cancel" },
+      { text: "Yes, Delete", style: "destructive", onPress: () => { if (onDelete) onDelete(post.id); } }
+    ]);
   };
 
   const renderAvatar = (url: string | null, fallbackUsername: string) => {
     if (url) {
       const formattedUrl = url.startsWith('http') ? url : `${BASE_URL}${url}`;
-      return <Image 
-        source={{ 
-          uri: formattedUrl, 
-          headers: authToken ? { Authorization: `Bearer ${authToken}`, 'X-Ghost-Shield-Key': shieldKey } : undefined
-        }} 
-        style={styles.smallAvatarImage} 
-      />;
+      return <Image source={{ uri: formattedUrl, headers: authToken ? { Authorization: `Bearer ${authToken}`, 'X-Ghost-Shield-Key': shieldKey } : undefined }} style={styles.smallAvatarImage} />;
     }
     return <Text style={styles.avatarLetter}>{fallbackUsername[0]?.toUpperCase() || 'U'}</Text>;
   };
@@ -145,19 +124,14 @@ export default function PostCard({ post, currentUsername: propUsername, onDelete
   return (
     <View style={styles.card}>
       <View style={[styles.cardHeader, { zIndex: 10 }]}>
-        <View style={styles.authorRow}>
-          <View style={styles.smallAvatar}>
-             {renderAvatar(displayAvatar, displayUsername)}
-          </View>
+        {/* 🟢 Clickable Profile Header */}
+        <TouchableOpacity style={styles.authorRow} onPress={onUserTap} disabled={!onUserTap}>
+          <View style={styles.smallAvatar}>{renderAvatar(displayAvatar, displayUsername)}</View>
           <Text style={styles.authorName}>@{displayUsername}</Text>
-        </View>
+        </TouchableOpacity>
 
         {isOwner && onDelete && (
-          <TouchableOpacity 
-            onPress={handleDeleteTrigger} 
-            style={styles.deleteBtn}
-            hitSlop={{ top: 15, bottom: 15, left: 15, right: 15 }}
-          >
+          <TouchableOpacity onPress={handleDeleteTrigger} style={styles.deleteBtn} hitSlop={{ top: 15, bottom: 15, left: 15, right: 15 }}>
             <Feather name="trash-2" size={16} color="#FF4444" />
           </TouchableOpacity>
         )}
@@ -174,16 +148,11 @@ export default function PostCard({ post, currentUsername: propUsername, onDelete
               onPressOut={() => { if(player){ player.playbackRate = 1.0; setIsSpeeding(false); }}}
               style={{ width: '100%' }}
             >
-              <VideoView player={player} style={[styles.mediaElement, { aspectRatio: 16 / 9 }]} nativeControls={true} contentFit="contain" />
-              {/* 🟢 FIX 2: pointerEvents must be a direct prop, not buried inside style! */}
+              <VideoView player={player} style={[styles.mediaElement, { aspectRatio: 1 }]} nativeControls={true} contentFit="contain" />
               {isSpeeding && <View style={styles.speedBadge} pointerEvents="none"><Text style={styles.speedText}>[ 2X SPEED ]</Text></View>}
             </Pressable>
           ) : (
-            <Image
-              source={authenticatedMediaSource as any}
-              style={[styles.mediaElement, { aspectRatio: Math.max(0.8, Math.min(aspectRatio, 2)) }]}
-              resizeMode="cover"
-            />
+            <Image source={authenticatedMediaSource as any} style={[styles.mediaElement, { aspectRatio: 1 }]} resizeMode="cover" />
           )}
         </View>
       ) : null}
@@ -211,11 +180,8 @@ export default function PostCard({ post, currentUsername: propUsername, onDelete
 
       <Modal visible={commentsVisible} animationType="slide" presentationStyle="pageSheet" onRequestClose={() => setCommentsVisible(false)}>
         <CommentsModal 
-          postId={post.id} 
-          currentUsername={activeUsername} 
-          onClose={() => setCommentsVisible(false)} 
-          onCommentAdded={() => setCommentCount(prev => prev + 1)}
-          onCommentDeleted={() => setCommentCount(prev => Math.max(0, prev - 1))}
+          postId={post.id} currentUsername={activeUsername} onClose={() => setCommentsVisible(false)} 
+          onCommentAdded={() => setCommentCount(prev => prev + 1)} onCommentDeleted={() => setCommentCount(prev => Math.max(0, prev - 1))}
         />
       </Modal>
     </View>
@@ -223,7 +189,7 @@ export default function PostCard({ post, currentUsername: propUsername, onDelete
 }
 
 const styles = StyleSheet.create({
-  card: { backgroundColor: '#1A1A1A', borderRadius: 8, borderWidth: 1, borderColor: '#262626', marginBottom: 16, padding: 16 },
+  card: { backgroundColor: '#1A1A1A', borderRadius: 8, borderWidth: 1, borderColor: '#262626', marginBottom: 16, padding: 16, marginHorizontal: 16 },
   cardHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 },
   authorRow: { flexDirection: 'row', alignItems: 'center' },
   smallAvatar: { width: 32, height: 32, borderRadius: 16, backgroundColor: '#262626', justifyContent: 'center', alignItems: 'center', marginRight: 12, overflow: 'hidden' },

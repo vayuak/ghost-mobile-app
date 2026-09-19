@@ -1,7 +1,7 @@
 {
   "expo": {
-    "name": "Glider", 
-    "slug": "GhostShieldMobile", 
+    "name": "Glider",
+    "slug": "GhostShieldMobile",
     "version": "1.0.0",
     "scheme": "glider",
     "orientation": "portrait",
@@ -27,7 +27,8 @@
       "expo-sqlite",
       "expo-font",
       "expo-status-bar",
-      "expo-secure-store"
+      "expo-secure-store",
+      "react-native-compressor"
     ],
     "extra": {
       "eas": {

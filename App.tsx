@@ -7,16 +7,18 @@ import * as Linking from 'expo-linking';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { ActivityIndicator, View } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
-
+import Toast from 'react-native-toast-message'; // 🟢 Added Toast Library
+import SinglePostScreen from './src/screens/SinglePostScreen';
 import AuthScreen from './src/screens/AuthScreen';
 import TabNavigator from './src/navigation/TabNavigator';
 import GossipsChatScreen from './src/screens/GossipsChatScreen';
+import PublicProfileScreen from './src/screens/PublicProfileScreen'; // 🟢 Imported PublicProfileScreen
 
 import { initLocalDatabase } from './src/services/LocalDB';
 import { ensureKeysPublished } from './src/services/CryptoVault';
+import { GlobalNetworkManager } from './src/services/GlobalNetworkManager';
 
 const Stack = createNativeStackNavigator();
-
 const linking: any = {
   prefixes: [Linking.createURL('/'), 'ghostshield://'],
   config: {
@@ -25,6 +27,8 @@ const linking: any = {
         screens: { Home: 'home', Gossips: 'chat', Profile: 'profile' }
       },
       GossipsChat: 'dm/:targetUser',
+      PublicProfile: 'user/:targetUser',
+      SinglePost: 'post/:postId', // 🟢 NEW: Catches ghostshield://post/123
     },
   },
 };
@@ -40,7 +44,6 @@ export default function App() {
         const token = await AsyncStorage.getItem('@ghost_token');
         if (token) {
           setIsAuthenticated(true);
-          // 🟢 Publish keys globally on startup
           await ensureKeysPublished();
         }
       } catch (error) {
@@ -74,18 +77,33 @@ export default function App() {
     <SafeAreaProvider>
       <NavigationContainer linking={linking}>
         {isAuthenticated ? (
-          <Stack.Navigator screenOptions={{ headerShown: false }}>
-            <Stack.Screen name="MainTabs">
-              {(props) => <TabNavigator {...props} onLogoutTrigger={handleLogoutTrigger} />}
-            </Stack.Screen>
-            <Stack.Screen name="GossipsChat">
-              {(props) => <GossipsChatScreen {...props} />}
-            </Stack.Screen>
-          </Stack.Navigator>
+          <GlobalNetworkManager>
+            {/* 🟢 Stack Screens MUST be inside the Stack.Navigator! */}
+            <Stack.Navigator screenOptions={{ headerShown: false }}>
+              <Stack.Screen name="MainTabs">
+                {(props) => <TabNavigator {...props} onLogoutTrigger={handleLogoutTrigger} />}
+              </Stack.Screen>
+              
+              <Stack.Screen name="GossipsChat">
+                {(props) => <GossipsChatScreen {...props} />}
+              </Stack.Screen>
+
+              {/* 🟢 Safely placed the new PublicProfileScreen here */}
+              <Stack.Screen name="PublicProfile">
+                {(props) => <PublicProfileScreen {...props} />}
+              </Stack.Screen>
+              <Stack.Screen name="SinglePost">
+                {(props) => <SinglePostScreen {...props} />}
+              </Stack.Screen>
+
+            </Stack.Navigator>
+          </GlobalNetworkManager>
         ) : (
           <AuthScreen onAuthSuccess={handleAuthSuccess} />
         )}
       </NavigationContainer>
+      {/* 🟢 Toast mounted at the very top of the app hierarchy */}
+      <Toast /> 
     </SafeAreaProvider>
   );
 }

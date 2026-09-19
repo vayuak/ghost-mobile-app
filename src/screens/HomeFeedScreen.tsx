@@ -1,16 +1,36 @@
-import React, { useState, useEffect } from 'react';
-import { StyleSheet, Text, View, TextInput, TouchableOpacity, FlatList, ActivityIndicator, Modal, Image } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context'; // 🟢 FIX: Replaced react-native SafeAreaView to stop UI overlap
+import React, { useState, useEffect, useRef } from 'react';
+import { StyleSheet, Text, View, TextInput, TouchableOpacity, FlatList, ActivityIndicator, Modal, Image, ScrollView, RefreshControl } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context'; 
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { apiClient, BASE_URL } from '../services/api';
+import { apiClient, BASE_URL, API_ROUTES } from '../services/api';
 import PostCard from '../components/PostCard';
+
+const SkeletonPost = () => (
+  <View style={styles.skeletonCard}>
+    <View style={styles.skeletonHeader}>
+      <View style={styles.skeletonAvatar} />
+      <View style={styles.skeletonTitle} />
+    </View>
+    <View style={styles.skeletonImageBox} />
+    <View style={styles.skeletonFooter} />
+  </View>
+);
 
 export default function HomeFeedScreen({ navigation }: any) {
   const [searchResults, setSearchResults] = useState<any[]>([]);
   const [searchType, setSearchType] = useState<'POSTS' | 'USERS'>('POSTS');
-  const [isLoading, setIsLoading] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
   
+  // 🟢 Pagination & Refresh States
+  const [page, setPage] = useState(0);
+  const [isFetchingMore, setIsFetchingMore] = useState(false);
+  const [isRefreshing, setIsRefreshing] = useState(false); // 🟢 For Pull-to-Refresh
+  const [hasMore, setHasMore] = useState(true);
+
+  // 🟢 Viewability Tracker for Videos
+  const [visiblePosts, setVisiblePosts] = useState<string[]>([]);
+
   const [metaMatrix, setMetaMatrix] = useState<any[]>([]);
   const [selectedCity, setSelectedCity] = useState('Global');
   const [fetchingMeta, setFetchingMeta] = useState(true);
@@ -19,6 +39,12 @@ export default function HomeFeedScreen({ navigation }: any) {
   const [citySearchQuery, setCitySearchQuery] = useState('');
   const [activeUser, setActiveUser] = useState<string>('');
 
+  // 🟢 Viewability Config (A post is "visible" if 50% of it is on screen)
+  const viewabilityConfig = useRef({ itemVisiblePercentThreshold: 50 }).current;
+  const onViewableItemsChanged = useRef(({ viewableItems }: any) => {
+    setVisiblePosts(viewableItems.map((v: any) => String(v.item.id)));
+  }).current;
+
   useEffect(() => {
     AsyncStorage.getItem('@active_username').then(user => {
       if (user) setActiveUser(user);
@@ -26,58 +52,68 @@ export default function HomeFeedScreen({ navigation }: any) {
   }, []);
 
   useEffect(() => {
-    const silentRefreshInterval = setInterval(async () => {
-      if (!searchQuery.trim()) {
-        try {
-          const token = await AsyncStorage.getItem('@ghost_token');
-          if (!token) return; 
-          
-          const res = await apiClient.post(`/v1/social/feed?city=${encodeURIComponent(selectedCity)}&page=0&size=20`);
-          setSearchResults(Array.isArray(res) ? res : res.content || []);
-        } catch (e) {
-          // Ignore network blips safely
-        }
-      }
-    }, 10000); 
-
-    return () => clearInterval(silentRefreshInterval);
-  }, [selectedCity, searchQuery]);
-
-  useEffect(() => {
     const fetchCities = async () => {
       try {
-        const data = await apiClient.get('/v1/social/meta/tier-one-cities');
+        const data = await apiClient.get(API_ROUTES.SOCIAL.CITIES);
         setMetaMatrix(data || []);
         if (data && data.length > 0 && data[0].cities.length > 0) setSelectedCity(data[0].cities[0]);
-      } catch (e) { console.error(e); } 
+      } catch (e) {} 
       finally { setFetchingMeta(false); }
     };
     fetchCities();
   }, []);
 
-  const executeQueryDiscovery = async (targetQuery: string, targetCity: string) => {
-    setIsLoading(true);
+  const executeQueryDiscovery = async (targetQuery: string, targetCity: string, pageNum: number = 0, append = false) => {
+    if (!append && !isRefreshing) setIsLoading(true);
     try {
       if (!targetQuery.trim()) {
-        const res = await apiClient.post(`/v1/social/feed?city=${encodeURIComponent(targetCity)}&page=0&size=20`);
+        const res = await apiClient.post(API_ROUTES.SEARCH.FEED(targetCity, pageNum, 20));
+        const data = Array.isArray(res) ? res : res.content || [];
         setSearchType('POSTS');
-        setSearchResults(Array.isArray(res) ? res : res.content || []);
+        
+        if (data.length < 20) setHasMore(false);
+        setSearchResults(append ? [...searchResults, ...data] : data);
       } else {
-        const res = await apiClient.get(`/v1/social/search?keyword=${encodeURIComponent(targetQuery.trim())}`);
+        const res = await apiClient.get(API_ROUTES.SEARCH.DISCOVER(targetQuery.trim()));
         setSearchType(res.type || 'POSTS');
         setSearchResults(res.results || res || []);
+        setHasMore(false); 
       }
-    } catch (err) { setSearchResults([]); } 
-    finally { setIsLoading(false); }
+    } catch (err) { 
+      if (!append) setSearchResults([]); 
+    } finally { 
+      setIsLoading(false); 
+      setIsFetchingMore(false);
+      setIsRefreshing(false);
+    }
   };
 
   useEffect(() => {
-    const delayDebounce = setTimeout(() => executeQueryDiscovery(searchQuery, selectedCity), 400);
+    setPage(0);
+    setHasMore(true);
+    const delayDebounce = setTimeout(() => executeQueryDiscovery(searchQuery, selectedCity, 0, false), 400);
     return () => clearTimeout(delayDebounce);
   }, [searchQuery, selectedCity]);
 
+  // 🟢 Handle Pull-to-Refresh
+  const handleRefresh = () => {
+    setIsRefreshing(true);
+    setPage(0);
+    setHasMore(true);
+    executeQueryDiscovery(searchQuery, selectedCity, 0, false);
+  };
+
+  const handleLoadMore = () => {
+    if (!hasMore || isFetchingMore || isLoading || searchQuery.trim()) return;
+    setIsFetchingMore(true);
+    const nextPage = page + 1;
+    setPage(nextPage);
+    executeQueryDiscovery(searchQuery, selectedCity, nextPage, true);
+  };
+
+  // 🟢 Navigate to Public Profile instead of Chat
   const handleUserTap = (username: string) => {
-    navigation.navigate('GossipsChat', { targetUser: username });
+    navigation.navigate('PublicProfile', { targetUser: username });
   };
 
   const allCities = metaMatrix.flatMap(continent => continent.cities);
@@ -111,10 +147,10 @@ export default function HomeFeedScreen({ navigation }: any) {
         )}
       </View>
 
-      <Modal visible={isCityModalVisible} animationType="slide" transparent={true}>
+      <Modal visible={isCityModalVisible} animationType="slide" transparent={true} onRequestClose={() => setCityModalVisible(false)}>
         <SafeAreaView style={styles.modalContainer}>
           <View style={styles.modalHeader}>
-            <TouchableOpacity onPress={() => setCityModalVisible(false)}>
+            <TouchableOpacity onPress={() => setCityModalVisible(false)} hitSlop={{ top: 15, bottom: 15, left: 15, right: 15 }}>
               <Text style={styles.closeBtn}>✕ Close</Text>
             </TouchableOpacity>
             <Text style={styles.modalTitle}>Select Area/City</Text>
@@ -152,49 +188,59 @@ export default function HomeFeedScreen({ navigation }: any) {
         </SafeAreaView>
       </Modal>
 
-      {isLoading ? (
-        <ActivityIndicator size="large" color="#666666" style={{ marginTop: 50 }} />
+      {isLoading && !isRefreshing ? (
+        <ScrollView style={{ flex: 1, paddingVertical: 16 }}>
+          <SkeletonPost />
+          <SkeletonPost />
+          <SkeletonPost />
+        </ScrollView>
       ) : (
         <FlatList
           data={searchResults}
           keyExtractor={(item, index) => item.id ? item.id.toString() : index.toString()}
           contentContainerStyle={{ paddingBottom: 20 }}
+          // 🟢 Pull to Refresh
+          refreshControl={<RefreshControl refreshing={isRefreshing} onRefresh={handleRefresh} tintColor="#FFFFFF" />}
+          // 🟢 Infinite Scroll
+          onEndReached={handleLoadMore} 
+          onEndReachedThreshold={0.5} 
+          // 🟢 Video Viewability Tracking
+          onViewableItemsChanged={onViewableItemsChanged}
+          viewabilityConfig={viewabilityConfig}
+          ListFooterComponent={isFetchingMore ? <ActivityIndicator size="small" color="#666" style={{ margin: 20 }} /> : null}
           renderItem={({ item }) => {
             if (searchType === 'USERS') {
               const avatarUri = item.avatarUrl || item.profilePictureUrl;
-              const formattedAvatar = avatarUri 
-                ? (avatarUri.startsWith('http') ? avatarUri : `${BASE_URL}${avatarUri}`)
-                : null;
+              const formattedAvatar = avatarUri ? (avatarUri.startsWith('http') ? avatarUri : `${BASE_URL}${avatarUri}`) : null;
 
               return (
                 <TouchableOpacity style={styles.userCard} onPress={() => handleUserTap(item.username)}>
                   <View style={styles.avatarPlaceholder}>
                     {formattedAvatar ? (
-                      <Image 
-                        source={{ uri: formattedAvatar }} 
-                        style={{ width: '100%', height: '100%', borderRadius: 20 }} 
-                      />
+                      <Image source={{ uri: formattedAvatar }} style={{ width: '100%', height: '100%', borderRadius: 20 }} />
                     ) : (
-                      <Text style={{ color: '#FFFFFF', fontWeight: '900' }}>
-                        {item.username ? item.username[0].toUpperCase() : 'U'}
-                      </Text>
+                      <Text style={{ color: '#FFFFFF', fontWeight: '900' }}>{item.username ? item.username[0].toUpperCase() : 'U'}</Text>
                     )}
                   </View>
                   <Text style={styles.userText}>@{item.username}</Text>
                 </TouchableOpacity>
               );
             }
-            
             return (
               <PostCard 
                 post={item} 
                 currentUsername={activeUser} 
+                isVisible={visiblePosts.includes(String(item.id))} // 🟢 Pass visibility down
+                onUserTap={() => handleUserTap(item.username)} // 🟢 Handle avatar tap
               />
             );
           }}
           ListEmptyComponent={
             <View style={styles.emptyState}>
-              <Text style={styles.emptyStateText}>No Results Found</Text>
+              <Text style={styles.emptyStateText}>No posts in {selectedCity} yet.</Text>
+              <TouchableOpacity style={styles.emptyStateBtn} onPress={() => navigation.navigate('Create')}>
+                <Text style={styles.emptyStateBtnText}>Be the first to post</Text>
+              </TouchableOpacity>
             </View>
           }
         />
@@ -225,5 +271,13 @@ const styles = StyleSheet.create({
   avatarPlaceholder: { width: 40, height: 40, borderRadius: 20, backgroundColor: '#262626', justifyContent: 'center', alignItems: 'center', borderWidth: 1, borderColor: '#404040', overflow: 'hidden' },
   userText: { color: '#FFFFFF', fontSize: 14, fontWeight: '800', marginLeft: 16, letterSpacing: 1 },
   emptyState: { alignItems: 'center', justifyContent: 'center', marginTop: 100 },
-  emptyStateText: { marginTop: 16, color: '#666666', fontSize: 14, fontWeight: '800', letterSpacing: 1, textAlign: 'center' }
+  emptyStateText: { marginTop: 16, color: '#666666', fontSize: 14, fontWeight: '800', letterSpacing: 1, textAlign: 'center' },
+  emptyStateBtn: { marginTop: 20, paddingHorizontal: 20, paddingVertical: 10, backgroundColor: '#262626', borderRadius: 20, borderWidth: 1, borderColor: '#404040' },
+  emptyStateBtnText: { color: '#FFF', fontWeight: '800', fontSize: 13 },
+  skeletonCard: { backgroundColor: '#1A1A1A', borderRadius: 8, borderWidth: 1, borderColor: '#262626', marginHorizontal: 16, marginBottom: 16, padding: 16 },
+  skeletonHeader: { flexDirection: 'row', alignItems: 'center', marginBottom: 16 },
+  skeletonAvatar: { width: 32, height: 32, borderRadius: 16, backgroundColor: '#262626' },
+  skeletonTitle: { width: 120, height: 14, backgroundColor: '#262626', borderRadius: 4, marginLeft: 12 },
+  skeletonImageBox: { width: '100%', aspectRatio: 1, backgroundColor: '#0A0A0A', borderRadius: 8, marginBottom: 16 },
+  skeletonFooter: { width: '60%', height: 14, backgroundColor: '#262626', borderRadius: 4 },
 });

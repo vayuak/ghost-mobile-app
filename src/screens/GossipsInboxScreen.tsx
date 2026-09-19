@@ -1,12 +1,12 @@
-import React, { useState, useEffect } from 'react';
-import { View, Text, FlatList, TouchableOpacity, StyleSheet, Image } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
-import { useIsFocused } from '@react-navigation/native';
+import React, { useState, useEffect, useCallback } from 'react';
+import { View, Text, FlatList, TouchableOpacity, StyleSheet, Image, RefreshControl, DeviceEventEmitter, Alert } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Feather } from '@expo/vector-icons';
-import { getRecentConversations } from '../services/LocalDB';
+import { getRecentConversations, clearLocalMessages } from '../services/LocalDB';
+import { preloadAvatars, peekAvatarUrl } from '../services/ProfileCache';
 
-interface InboxThread {
+interface Conversation {
   roomId: string;
   targetUser: string;
   lastMessage: string;
@@ -14,118 +14,177 @@ interface InboxThread {
 }
 
 export default function GossipsInboxScreen({ navigation }: any) {
-  const isFocused = useIsFocused();
-  const [threads, setThreads] = useState<InboxThread[]>([]);
+  const [conversations, setConversations] = useState<Conversation[]>([]);
+  const [avatarVersion, setAvatarVersion] = useState(0);
+  const [refreshing, setRefreshing] = useState(false);
+  const [ready, setReady] = useState(false);
+  const insets = useSafeAreaInsets();
+
+  const loadInbox = useCallback(async () => {
+    try {
+      const me = ((await AsyncStorage.getItem('@active_username')) || '').trim().toLowerCase();
+      const rows = getRecentConversations(me) as Conversation[];
+      setConversations(rows);
+
+      if (rows.length) {
+        await preloadAvatars(rows.map((r) => r.targetUser));
+        setAvatarVersion((v) => v + 1);
+      }
+    } catch (e) {
+      console.warn('[Inbox] load failed:', e);
+    } finally {
+      setReady(true);
+      setRefreshing(false);
+    }
+  }, []);
 
   useEffect(() => {
-    if (isFocused) {
-      loadInbox();
-    }
-  }, [isFocused]);
+    // 🟢 Reloads when you click the tab
+    const unsubFocus = navigation.addListener('focus', loadInbox);
+    
+    // 🟢 Reloads instantly when a background message arrives from GlobalNetworkManager
+    const unsubEvent = DeviceEventEmitter.addListener('db_chats_updated', loadInbox);
+    
+    loadInbox();
+    
+    return () => {
+      unsubFocus();
+      unsubEvent.remove();
+    };
+  }, [navigation, loadInbox]);
 
-  const loadInbox = async () => {
-    try {
-      // 🟢 FIX: Removed @ symbol from AsyncStorage keys
-      const activeUser = await AsyncStorage.getItem('active_username') || '';
-      const recentChats = getRecentConversations(activeUser) as InboxThread[];
-      setThreads(recentChats);
-    } catch (e) {
-      console.warn('Failed to load local inbox');
-    }
+  const onRefresh = () => {
+    setRefreshing(true);
+    loadInbox();
   };
 
-  const formatTime = (isoString: string) => {
-    try {
-      const date = new Date(isoString);
-      const today = new Date();
-      if (date.toDateString() === today.toDateString()) {
-        return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-      }
-      return date.toLocaleDateString([], { month: 'short', day: 'numeric' });
-    } catch {
-      return '';
+  const handleLongPress = (targetUser: string, roomId: string) => {
+    Alert.alert(
+      `Options for @${targetUser}`,
+      'Manage this conversation:',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { 
+          text: 'Clear Chat History', 
+          style: 'destructive',
+          onPress: () => {
+            Alert.alert('Confirm', 'Delete this entire conversation?', [
+              { text: 'Cancel', style: 'cancel' },
+              {
+                text: 'Delete',
+                style: 'destructive',
+                onPress: () => {
+                  clearLocalMessages(roomId);
+                  loadInbox();
+                }
+              }
+            ]);
+          }
+        }
+      ]
+    );
+  };
+
+  const formatStamp = (iso: string) => {
+    if (!iso) return '';
+    const d = new Date(iso);
+    if (isNaN(d.getTime())) return '';
+    const now = new Date();
+    if (d.toDateString() === now.toDateString()) {
+      return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
     }
+    const yesterday = new Date(now);
+    yesterday.setDate(now.getDate() - 1);
+    if (d.toDateString() === yesterday.toDateString()) return 'Yesterday';
+    if (now.getTime() - d.getTime() < 7 * 24 * 3600 * 1000) {
+      return d.toLocaleDateString([], { weekday: 'short' });
+    }
+    return d.toLocaleDateString([], { day: '2-digit', month: '2-digit', year: '2-digit' });
+  };
+
+  const renderRow = ({ item }: { item: Conversation }) => {
+    const avatarUri = peekAvatarUrl(item.targetUser);
+
+    return (
+      <TouchableOpacity
+        style={styles.row}
+        onPress={() => navigation.navigate('GossipsChat', { targetUser: item.targetUser })}
+        onLongPress={() => handleLongPress(item.targetUser, item.roomId)} // 🟢 WhatsApp style hold-to-delete
+        activeOpacity={0.7}
+      >
+        <View style={styles.avatarWrap}>
+          {avatarUri ? (
+            <Image source={{ uri: avatarUri }} style={styles.avatarImg} />
+          ) : (
+            <View style={styles.avatarFallback}>
+              <Text style={styles.avatarLetter}>{item.targetUser[0]?.toUpperCase() || '?'}</Text>
+            </View>
+          )}
+        </View>
+
+        <View style={styles.info}>
+          <View style={styles.topLine}>
+            <Text style={styles.username} numberOfLines={1}>@{item.targetUser}</Text>
+            <Text style={styles.stamp}>{formatStamp(item.timestamp)}</Text>
+          </View>
+          <Text style={styles.preview} numberOfLines={1}>{item.lastMessage}</Text>
+        </View>
+      </TouchableOpacity>
+    );
   };
 
   return (
-    <SafeAreaView style={styles.container} edges={['top']}>
+    <View style={[styles.container, { paddingTop: insets.top }]}>
       <View style={styles.header}>
-        <Text style={styles.headerTitle}>Encrypted Inbox</Text>
-        <Feather name="lock" size={16} color="#00C851" />
+        <Text style={styles.headerTitle}>Gossips</Text>
+        <TouchableOpacity style={styles.newBtn} onPress={() => navigation.navigate('Home')}>
+          <Feather name="edit-3" size={20} color="#A3A3A3" />
+        </TouchableOpacity>
       </View>
 
       <FlatList
-        data={threads}
+        data={conversations}
+        extraData={avatarVersion}
         keyExtractor={(item) => item.roomId}
-        contentContainerStyle={styles.listContainer}
+        renderItem={renderRow}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#FFFFFF" />}
+        contentContainerStyle={{ paddingBottom: insets.bottom + 24 }}
+        initialNumToRender={15}
+        maxToRenderPerBatch={15}
+        windowSize={9}
+        removeClippedSubviews
         ListEmptyComponent={
-          <View style={styles.emptyContainer}>
-            <Feather name="message-square" size={48} color="#262626" />
-            <Text style={styles.emptyText}>No Encrypted Chats Yet</Text>
-            <Text style={styles.emptySubText}>Search for a user to start an end-to-end encrypted conversation.</Text>
-          </View>
-        }
-        renderItem={({ item }) => (
-          <TouchableOpacity 
-            style={styles.chatRow}
-            onPress={() => navigation.navigate('GossipsChat', { targetUser: item.targetUser })}
-          >
-            <View style={styles.avatar}>
-              <Text style={styles.avatarText}>{item.targetUser[0]?.toUpperCase()}</Text>
-            </View>
-            
-            <View style={styles.chatInfo}>
-              <View style={styles.topLine}>
-                <Text style={styles.username}>@{item.targetUser}</Text>
-                <Text style={styles.time}>{formatTime(item.timestamp)}</Text>
-              </View>
-              
-              <Text style={styles.messagePreview} numberOfLines={1}>
-                {item.lastMessage.startsWith('[B64_IMG]') ? '📷 Photo' : item.lastMessage}
+          ready ? (
+            <View style={styles.empty}>
+              <Feather name="message-square" size={48} color="#262626" />
+              <Text style={styles.emptyText}>No conversations yet</Text>
+              <Text style={styles.emptySub}>
+                Find someone on the Home tab to start a gossip. Your history stays on this phone.
               </Text>
             </View>
-          </TouchableOpacity>
-        )}
+          ) : null
+        }
       />
-    </SafeAreaView>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#000000' },
-  header: { 
-    flexDirection: 'row', 
-    alignItems: 'center', 
-    justifyContent: 'space-between', 
-    padding: 16, 
-    borderBottomWidth: 1, 
-    borderColor: '#1A1A1A' 
-  },
-  headerTitle: { color: '#FFFFFF', fontSize: 24, fontWeight: '800', letterSpacing: 0.5 },
-  listContainer: { flexGrow: 1 },
-  emptyContainer: { flex: 1, justifyContent: 'center', alignItems: 'center', marginTop: 100, paddingHorizontal: 32 },
-  emptyText: { color: '#A3A3A3', fontSize: 16, fontWeight: '700', marginTop: 16 },
-  emptySubText: { color: '#525252', fontSize: 14, textAlign: 'center', marginTop: 8, lineHeight: 20 },
-  chatRow: { 
-    flexDirection: 'row', 
-    padding: 16, 
-    borderBottomWidth: 1, 
-    borderColor: '#121212',
-    alignItems: 'center'
-  },
-  avatar: { 
-    width: 50, 
-    height: 50, 
-    borderRadius: 25, 
-    backgroundColor: '#262626', 
-    justifyContent: 'center', 
-    alignItems: 'center', 
-    marginRight: 16 
-  },
-  avatarText: { color: '#FFFFFF', fontSize: 20, fontWeight: '700' },
-  chatInfo: { flex: 1, justifyContent: 'center' },
-  topLine: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 4 },
-  username: { color: '#FFFFFF', fontSize: 16, fontWeight: '700' },
-  time: { color: '#666666', fontSize: 12, fontWeight: '600' },
-  messagePreview: { color: '#A3A3A3', fontSize: 14, lineHeight: 20 },
+  container: { flex: 1, backgroundColor: '#0A0A0A' },
+  header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 14, borderBottomWidth: 1, borderBottomColor: '#1A1A1A' },
+  headerTitle: { color: '#FFFFFF', fontSize: 22, fontWeight: '900', letterSpacing: 0.5 },
+  newBtn: { padding: 8, backgroundColor: '#1A1A1A', borderRadius: 20 },
+  row: { flexDirection: 'row', paddingHorizontal: 16, paddingVertical: 14, borderBottomWidth: 1, borderBottomColor: '#141414', alignItems: 'center' },
+  avatarWrap: { width: 50, height: 50, borderRadius: 25, marginRight: 14, overflow: 'hidden', backgroundColor: '#262626' },
+  avatarImg: { width: '100%', height: '100%' },
+  avatarFallback: { width: '100%', height: '100%', backgroundColor: '#262626', justifyContent: 'center', alignItems: 'center' },
+  avatarLetter: { color: '#FFFFFF', fontWeight: 'bold', fontSize: 18 },
+  info: { flex: 1 },
+  topLine: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 4, alignItems: 'center' },
+  username: { color: '#FFFFFF', fontSize: 16, fontWeight: '700', flexShrink: 1, marginRight: 8 },
+  stamp: { color: '#666666', fontSize: 11, fontWeight: '600' },
+  preview: { color: '#8E95A5', fontSize: 14 },
+  empty: { alignItems: 'center', justifyContent: 'center', marginTop: 90, paddingHorizontal: 36 },
+  emptyText: { color: '#FFFFFF', fontSize: 16, fontWeight: '800', marginTop: 16 },
+  emptySub: { color: '#666666', fontSize: 13, textAlign: 'center', marginTop: 8, lineHeight: 19 },
 });

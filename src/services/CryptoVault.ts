@@ -2,7 +2,7 @@ import 'react-native-get-random-values';
 import nacl from 'tweetnacl';
 import util from 'tweetnacl-util';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { apiClient } from './api';
+import { apiClient, API_ROUTES } from './api'; // 🟢 Added API_ROUTES
 
 const PINNED_KEY_PREFIX = '@ghost_pinned_key:';
 
@@ -38,10 +38,6 @@ const resolveUsername = async (overrideUser?: string): Promise<string> => {
 // Device Identity (Per-Account Permanent Keys)
 // ---------------------------------------------------------------------------
 
-/** 
- * Create or load this user's keypair on this device.
- * Keypair is generated ONLY ONCE on first login and reused permanently.
- */
 export const initializeDeviceKeys = async (usernameOverride?: string): Promise<string> => {
   const username = await resolveUsername(usernameOverride);
   if (!username) {
@@ -107,7 +103,8 @@ export const ensureKeysPublished = async (usernameOverride?: string): Promise<vo
     if (!username) return;
 
     const myPub = await initializeDeviceKeys(username);
-    await apiClient.post('/v1/auth/keys', { publicKey: myPub });
+    // 🟢 Centralized Route
+    await apiClient.post(API_ROUTES.AUTH.PUBLISH_KEY, { publicKey: myPub });
   } catch (e: any) {
     console.warn('[CryptoVault] Could not publish public key:', e?.message);
   }
@@ -127,7 +124,8 @@ export const getPeerPublicKey = async (
 
   let fetched: string | null = null;
   try {
-    const res = await apiClient.get(`/v1/auth/keys/${encodeURIComponent(user)}`);
+    // 🟢 Centralized Route
+    const res = await apiClient.get(API_ROUTES.AUTH.GET_KEY(user));
     fetched = res?.publicKey || null;
   } catch (e: any) {
     if (pinned) return pinned;

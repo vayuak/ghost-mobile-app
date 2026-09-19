@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { View, Text, TextInput, TouchableOpacity, FlatList, KeyboardAvoidingView, Platform, ActivityIndicator, Alert, Image } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { apiClient, BASE_URL } from '../services/api';
+import Toast from 'react-native-toast-message'; // 🟢 Added Toast
+import { apiClient, BASE_URL, API_ROUTES } from '../services/api';
 import { Feather } from '@expo/vector-icons';
 
 interface Comment {
@@ -41,7 +42,7 @@ export default function CommentsModal({ postId, currentUsername: propUsername, o
 
   const fetchComments = async () => {
     try {
-      const response = await apiClient.get(`/v1/social/post/${postId}/comments?t=${new Date().getTime()}`);
+      const response = await apiClient.get(API_ROUTES.POST.GET_COMMENTS(postId, new Date().getTime()));
       setComments(response.data || response); 
     } catch (error) {
       console.error("Failed to load comments", error);
@@ -58,33 +59,35 @@ export default function CommentsModal({ postId, currentUsername: propUsername, o
         parentId: replyingTo ? replyingTo.id : null
       };
       
-      await apiClient.post(`/v1/social/post/${postId}/comment`, payload);
+      await apiClient.post(API_ROUTES.POST.CREATE_COMMENT(postId), payload);
       setNewComment('');
       setReplyingTo(null);
       fetchComments(); 
       onCommentAdded(); 
     } catch (error: any) {
       const msg = error.response?.data?.error || error.message || "Failed to post comment";
-      if (Platform.OS === 'web') {
-        window.alert(msg);
-      } else {
-        Alert.alert("Error", msg);
-      }
+      // 🟢 Replaced Alert with Toast
+      Toast.show({
+        type: 'error',
+        text1: 'Error',
+        text2: msg
+      });
     }
   };
 
   const executeDelete = async (commentId: number) => {
     try {
-      await apiClient.delete(`/v1/social/post/comment/${commentId}`);
+      await apiClient.delete(API_ROUTES.POST.DELETE_COMMENT(commentId));
       setComments(current => current.filter(c => String(c.id) !== String(commentId)));
       onCommentDeleted(); 
     } catch (error: any) {
       const msg = error.response?.data?.error || error.message || "Failed to delete comment";
-      if (Platform.OS === 'web') {
-        window.alert("Error: " + msg);
-      } else {
-        Alert.alert("Error", msg);
-      }
+      // 🟢 Replaced Alert with Toast
+      Toast.show({
+        type: 'error',
+        text1: 'Error',
+        text2: msg
+      });
     }
   };
 
@@ -94,6 +97,7 @@ export default function CommentsModal({ postId, currentUsername: propUsername, o
         executeDelete(commentId);
       }
     } else {
+      // Destructive confirmation remains as Alert.alert
       Alert.alert("Delete Comment", "Are you sure you want to delete this comment?", [
         { text: "No", style: "cancel" },
         { 
@@ -142,7 +146,12 @@ export default function CommentsModal({ postId, currentUsername: propUsername, o
           </View>
           
           {isOwner && (
-            <TouchableOpacity onPress={() => handleDeleteComment(item.id)} style={{ padding: 6, backgroundColor: 'rgba(255, 59, 48, 0.1)', borderRadius: 6 }}>
+            // 🟢 Added hitSlop
+            <TouchableOpacity 
+              onPress={() => handleDeleteComment(item.id)} 
+              style={{ padding: 6, backgroundColor: 'rgba(255, 59, 48, 0.1)', borderRadius: 6 }}
+              hitSlop={{ top: 15, bottom: 15, left: 15, right: 15 }}
+            >
               <Feather name="trash-2" size={15} color="#FF3B30" />
             </TouchableOpacity>
           )}
@@ -163,7 +172,8 @@ export default function CommentsModal({ postId, currentUsername: propUsername, o
     <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={{ flex: 1, backgroundColor: '#121212' }}>
       <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', padding: 16, borderBottomWidth: 1, borderColor: '#262626', marginTop: Platform.OS === 'ios' ? 0 : 10 }}>
         <Text style={{ color: 'white', fontSize: 18, fontWeight: 'bold' }}>Comments</Text>
-        <TouchableOpacity onPress={onClose} style={{ padding: 4 }}>
+        {/* 🟢 Added hitSlop */}
+        <TouchableOpacity onPress={onClose} style={{ padding: 4 }} hitSlop={{ top: 15, bottom: 15, left: 15, right: 15 }}>
           <Feather name="x" size={24} color="white" />
         </TouchableOpacity>
       </View>
@@ -184,7 +194,8 @@ export default function CommentsModal({ postId, currentUsername: propUsername, o
         {replyingTo && (
           <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
             <Text style={{ color: '#8E95A5', fontSize: 12 }}>Replying to @{replyingTo.username}</Text>
-            <TouchableOpacity onPress={() => setReplyingTo(null)}>
+            {/* 🟢 Added hitSlop */}
+            <TouchableOpacity onPress={() => setReplyingTo(null)} hitSlop={{ top: 15, bottom: 15, left: 15, right: 15 }}>
               <Feather name="x-circle" size={16} color="#FF4444" />
             </TouchableOpacity>
           </View>

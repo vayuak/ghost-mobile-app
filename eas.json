@@ -7,7 +7,7 @@
       "android": {
         "buildType": "apk"
       },
-      "node": "20.10.0",
+      "node": "20.19.4",
       "env": {
         "NPM_CONFIG_LEGACY_PEER_DEPS": "true",
         "EXPO_PUBLIC_API_BASE_URL": "https://mode-production-6bbb.up.railway.app",

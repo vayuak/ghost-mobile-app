@@ -5,7 +5,8 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Feather, Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { apiClient, BASE_URL, systemLogout, uploadMultipart, buildFilePart } from '../services/api';
+import Toast from 'react-native-toast-message'; // 🟢 Added Toast
+import { apiClient, BASE_URL, systemLogout, uploadMultipart, buildFilePart, API_ROUTES } from '../services/api'; 
 import PostCard from '../components/PostCard';
 
 export default function ProfileScreen({ navigation, onLogoutTrigger }: any) {
@@ -26,7 +27,7 @@ export default function ProfileScreen({ navigation, onLogoutTrigger }: any) {
 
       if (token) {
         try {
-          const response = await apiClient.get('/v1/auth/me');
+          const response = await apiClient.get(API_ROUTES.AUTH.ME);
           setCurrentUsername(response.username);
           if (response.profilePictureUrl) {
             setAvatarUri(response.profilePictureUrl);
@@ -52,7 +53,7 @@ export default function ProfileScreen({ navigation, onLogoutTrigger }: any) {
 
   const fetchUserProfileAndLogs = async () => {
     try {
-      const res = await apiClient.get(`/v1/social/post/my-posts`);
+      const res = await apiClient.get(API_ROUTES.PROFILE.MY_POSTS);
       const posts = Array.isArray(res) ? res : res.content || [];
       setUserPosts(posts);
     } catch (e) {
@@ -112,7 +113,7 @@ export default function ProfileScreen({ navigation, onLogoutTrigger }: any) {
       }
 
       const updateRes = await uploadMultipart(
-        '/v1/social/user/profile/upload-and-update',
+        API_ROUTES.PROFILE.UPDATE_DP,
         formData,
         setUploadPercent
       );
@@ -123,10 +124,22 @@ export default function ProfileScreen({ navigation, onLogoutTrigger }: any) {
         setAvatarUri(newAvatarUrl);
         await AsyncStorage.setItem('@user_avatar', newAvatarUrl);
       }
-      Alert.alert("Success", "Profile picture updated globally.");
+      
+      // 🟢 Replaced Alert with Toast
+      Toast.show({
+        type: 'success',
+        text1: 'Success',
+        text2: 'Profile picture updated globally.'
+      });
+      
     } catch (e: any) {
       setAvatarUri(previousAvatar);
-      Alert.alert("Upload Failed", e.message || "Could not update profile picture.");
+      // 🟢 Replaced Alert with Toast
+      Toast.show({
+        type: 'error',
+        text1: 'Upload Failed',
+        text2: e.message || "Could not update profile picture."
+      });
     } finally {
       setUploadPercent(null);
     }
@@ -134,15 +147,25 @@ export default function ProfileScreen({ navigation, onLogoutTrigger }: any) {
 
   const handleDeletePost = async (postId: any) => {
     try {
-      await apiClient.delete(`/v1/social/post/${postId}/delete`);
+      await apiClient.delete(API_ROUTES.PROFILE.DELETE_POST(postId));
       setUserPosts(current => current.filter(post => String(post.id) !== String(postId)));
-      Alert.alert("Success", "Post permanently deleted.");
+      
+      // 🟢 Replaced Alert with Toast
+      Toast.show({
+        type: 'success',
+        text1: 'Success',
+        text2: 'Post permanently deleted.'
+      });
     } catch (e: any) {
-      Alert.alert("Delete Failed", e.message || "An unknown network error occurred.");
+      // 🟢 Replaced Alert with Toast
+      Toast.show({
+        type: 'error',
+        text1: 'Delete Failed',
+        text2: e.message || "An unknown network error occurred."
+      });
     }
   };
 
-  // 🟢 SAFELY PARSES CAPABILITY URLS PRODUCED BY THE BACKEND
   const getFullAvatarUrl = (uri: string | null) => {
     if (!uri) return null;
     if (uri.startsWith('http://') || uri.startsWith('https://') || uri.startsWith('file://') || uri.startsWith('data:') || uri.startsWith('blob:')) {
@@ -159,7 +182,12 @@ export default function ProfileScreen({ navigation, onLogoutTrigger }: any) {
     <SafeAreaView style={styles.container} edges={['top']}>
       <View style={styles.topNav}>
         <Text style={styles.brandTitle}>GHOST<Text style={{ color: '#8E95A5' }}>SHIELD</Text></Text>
-        <TouchableOpacity onPress={() => setMenuVisible(true)} style={styles.iconButton}>
+        {/* 🟢 Added hitSlop */}
+        <TouchableOpacity 
+          onPress={() => setMenuVisible(true)} 
+          style={styles.iconButton}
+          hitSlop={{ top: 15, bottom: 15, left: 15, right: 15 }}
+        >
           <Feather name="more-vertical" size={22} color="#FFF" />
         </TouchableOpacity>
       </View>
@@ -215,7 +243,8 @@ export default function ProfileScreen({ navigation, onLogoutTrigger }: any) {
         )}
       />
 
-      <Modal visible={menuVisible} animationType="slide" transparent={true}>
+      {/* 🟢 Added onRequestClose for Android back swipe */}
+      <Modal visible={menuVisible} animationType="slide" transparent={true} onRequestClose={() => setMenuVisible(false)}>
         <View style={styles.modalOverlay}>
           <TouchableOpacity style={{ flex: 1 }} onPress={() => setMenuVisible(false)} />
           <View style={styles.modalContent}>

@@ -3,8 +3,8 @@ import { StyleSheet, Text, TextInput, View, TouchableOpacity, Alert, ActivityInd
 import { SafeAreaView } from 'react-native-safe-area-context';
 import * as ImagePicker from 'expo-image-picker';
 import { Feather } from '@expo/vector-icons';
-import { apiClient, uploadMultipart, buildFilePart } from '../services/api';
-
+import { apiClient, uploadMultipart, buildFilePart, API_ROUTES } from '../services/api'; // 🟢 IMPORTED API_ROUTES
+import { compressMedia } from '../services/MediaCompressor';
 export default function CreateDirectiveScreen({ navigation }: any) {
   const isPublishingLock = useRef(false);
   const [postTitle, setPostTitle] = useState('');
@@ -25,7 +25,8 @@ export default function CreateDirectiveScreen({ navigation }: any) {
   useEffect(() => {
     const fetchCities = async () => {
       try {
-        const data = await apiClient.get('/v1/social/meta/tier-one-cities');
+        // 🟢 Centralized Route
+        const data = await apiClient.get(API_ROUTES.SOCIAL.CITIES);
         setMetaMatrix(data);
         if (data && data.length > 0 && data[0].cities.length > 0) {
           setSelectedCity(data[0].cities[0]);
@@ -87,7 +88,15 @@ export default function CreateDirectiveScreen({ navigation }: any) {
       formData.append('cityName', selectedCity);
       formData.append('country', selectedContinent);
 
-      const filePart = buildFilePart(mediaAsset || { uri: mediaUri });
+      // 🟢 1. Determine media type
+const isVideo = mediaAsset?.type === 'video' || mediaUri.endsWith('.mp4') || mediaUri.endsWith('.mov');
+const mediaTypeStr = isVideo ? 'video' : 'image';
+
+// 🟢 2. Compress the file before uploading
+const finalUri = await compressMedia(mediaUri, mediaTypeStr);
+
+// 🟢 3. Build the file part using the newly compressed URI
+const filePart = buildFilePart({ ...mediaAsset, uri: finalUri });
 
       if (Platform.OS === 'web') {
         const response = await fetch(mediaUri);
@@ -97,7 +106,8 @@ export default function CreateDirectiveScreen({ navigation }: any) {
         formData.append('file', filePart);
       }
 
-      await uploadMultipart('/v1/social/post/upload-and-create', formData, setUploadPercent);
+      // 🟢 Centralized Route
+      await uploadMultipart(API_ROUTES.SOCIAL.CREATE_POST, formData, setUploadPercent);
 
       if (Platform.OS === 'web') {
         window.alert(`Post Published Successfully! 🚀\nYour post is now live in ${selectedCity.toUpperCase()}.`);
@@ -178,7 +188,8 @@ export default function CreateDirectiveScreen({ navigation }: any) {
             </TouchableOpacity>
           )}
 
-          <Modal visible={isCityModalVisible} animationType="slide" transparent={true}>
+          <Modal visible={isCityModalVisible} animationType="slide" transparent={true} onRequestClose={() => setCityModalVisible(false)} // 🟢 Fixes Android back button
+>
             <SafeAreaView style={styles.modalContainer} edges={['top', 'bottom']}>
               <View style={styles.modalHeader}>
                 <TouchableOpacity onPress={() => setCityModalVisible(false)} style={{ padding: 8 }}>

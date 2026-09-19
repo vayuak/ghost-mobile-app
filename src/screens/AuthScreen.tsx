@@ -3,7 +3,7 @@ import { Text, View, TextInput, TouchableOpacity, ActivityIndicator, KeyboardAvo
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as SecureStore from 'expo-secure-store'; // 🟢 ADDED ENCRYPTED STORAGE
 import { Feather } from '@expo/vector-icons';
-import { apiClient } from '../services/api';
+import { apiClient, API_ROUTES } from '../services/api';
 
 export default function AuthScreen({ onAuthSuccess }: { onAuthSuccess: () => void }) {
   const [currentMode, setCurrentMode] = useState<'LOGIN' | 'REGISTER' | 'FORGOT_PASSWORD'>('LOGIN');
@@ -26,7 +26,7 @@ export default function AuthScreen({ onAuthSuccess }: { onAuthSuccess: () => voi
     }
     const checkUsername = async () => {
       try {
-        const res = await apiClient.get(`/v1/auth/check-username?username=${username}`);
+        const res = await apiClient.get(`${API_ROUTES.AUTH.CHECK_USERNAME}?username=${username}`);
         setUsernameStatus(res.available ? 'AVAILABLE' : 'TAKEN');
       } catch (e) {
         setUsernameStatus(null);
@@ -103,14 +103,14 @@ export default function AuthScreen({ onAuthSuccess }: { onAuthSuccess: () => voi
     if (!contactId || !password) return setUiMessage({ text: 'Email and password are required.', type: 'error' });
     setLoading(true);
     try {
-      const res = await apiClient.post('/v1/auth/login', { identifier: contactId.trim(), password });
+      const res = await apiClient.post(API_ROUTES.AUTH.LOGIN, { identifier: contactId.trim(), password });
       const jwtToken = res.jwt || res.token;
       
       if (jwtToken) {
         await AsyncStorage.setItem('@ghost_token', jwtToken);
         
         try {
-          const meRes = await apiClient.get('/v1/auth/me');
+          const meRes = await apiClient.get(API_ROUTES.AUTH.ME);
           const trueUsername = meRes.username.trim().toLowerCase();
           await AsyncStorage.setItem('@active_username', trueUsername);
         } catch (meError) {
@@ -140,7 +140,7 @@ export default function AuthScreen({ onAuthSuccess }: { onAuthSuccess: () => voi
       await SecureStore.setItemAsync('ghost_private_key', privateKey);
 
       // 3. Send payload INCLUDING the public key to Spring Boot
-      await apiClient.post('/v1/auth/register', { 
+      await apiClient.post(API_ROUTES.AUTH.REGISTER, { 
         username: username.toLowerCase().trim(), 
         password, 
         contactIdentifier: contactId.trim(),
@@ -161,7 +161,7 @@ export default function AuthScreen({ onAuthSuccess }: { onAuthSuccess: () => voi
 
     setLoading(true);
     try {
-      await apiClient.post('/v1/auth/forgot-password', { identifier: contactId.trim() });
+      await apiClient.post(API_ROUTES.AUTH.FORGOT_PASSWORD, { identifier: contactId.trim() });
       setUiMessage({ text: `Recovery code sent to ${contactId.trim()}`, type: 'success' });
       setWorkflowStep(2);
     } catch (err: any) { 
@@ -178,7 +178,7 @@ export default function AuthScreen({ onAuthSuccess }: { onAuthSuccess: () => voi
     setLoading(true);
     try {
       if (currentMode === 'FORGOT_PASSWORD') {
-        await apiClient.post('/v1/auth/reset-password', { 
+        await apiClient.post(API_ROUTES.AUTH.RESET_PASSWORD, { 
           identifier: contactId.trim(), 
           newPassword: password, 
           otp: otpCode.trim() 
@@ -186,7 +186,7 @@ export default function AuthScreen({ onAuthSuccess }: { onAuthSuccess: () => voi
         setUiMessage({ text: 'Password reset successful. Returning to login.', type: 'success' });
       } else {
         const cleanTarget = (username || contactId).toLowerCase().trim();
-        await apiClient.post('/v1/auth/verify-otp', { 
+        await apiClient.post(API_ROUTES.AUTH.VERIFY_OTP, { 
           username: cleanTarget, 
           otp: otpCode.trim() 
         });
@@ -212,9 +212,8 @@ export default function AuthScreen({ onAuthSuccess }: { onAuthSuccess: () => voi
   return (
     <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={{ flex: 1, backgroundColor: '#000000' }}>
       <ScrollView contentContainerStyle={styles.container}>
-        <Text style={styles.brandTitle}>GHOST SHIELD</Text>
-        <Text style={styles.brandSubtitle}>SECURE TERMINAL</Text>
-
+        <Text style={styles.brandTitle}>Caravel</Text>
+        <Text style={styles.brandSubtitle}>Explore together. Travel safely. badger.developer.001@gmail.com</Text>
         <View style={styles.card}>
           <Text style={styles.modeText}>[{currentMode} PROTOCOL]</Text>
 

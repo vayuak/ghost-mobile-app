@@ -1,36 +1,25 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { View, Text, TextInput, TouchableOpacity, ScrollView, StyleSheet, KeyboardAvoidingView, Platform, Image, Alert } from 'react-native';
-import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context'; 
+import {
+  View, Text, TextInput, TouchableOpacity, ScrollView, StyleSheet,
+  Platform, Image, Alert, ActivityIndicator, KeyboardAvoidingView, DeviceEventEmitter, Keyboard
+} from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { Client } from '@stomp/stompjs';
 import { Feather } from '@expo/vector-icons';
-import * as ImagePicker from 'expo-image-picker';
-import { apiClient, BASE_URL, P2P_WS_URL } from '../services/api';
-import { initLocalDatabase, saveLocalMessage, getLocalMessages } from '../services/LocalDB';
-import { ensureKeysPublished, encryptForPeer, decryptFromPeer, getPeerPublicKey, acceptPeerKeyChange, safetyNumber, KeyChangedError, NoKeyError, CRYPTO_VERSION } from '../services/CryptoVault';
+import * as ImagePicker from 'expo-image-picker'; 
+import { apiClient, API_ROUTES } from '../services/api';
+import { getAvatarUrl } from '../services/ProfileCache';
+import { useNetwork } from '../services/GlobalNetworkManager'; 
+import {
+  ensureKeysPublished, encryptForPeer, getPeerPublicKey,
+  acceptPeerKeyChange, safetyNumber, KeyChangedError, NoKeyError,
+} from '../services/CryptoVault';
+import {
+  initLocalDatabase, saveLocalMessage, getLocalMessages, markRoomAsRead, clearLocalMessages
+} from '../services/LocalDB';
 
-if (typeof global.TextEncoder === 'undefined') {
-  global.TextEncoder = class {
-    encode(str: string) {
-      const buffer = new ArrayBuffer(str.length);
-      const view = new Uint8Array(buffer);
-      for (let i = 0; i < str.length; i++) view[i] = str.charCodeAt(i);
-      return view;
-    }
-  } as any;
-}
-
-if (typeof global.TextDecoder === 'undefined') {
-  global.TextDecoder = class {
-    decode(arr: Uint8Array) {
-      let str = '';
-      for (let i = 0; i < arr.length; i++) {
-        str += String.fromCharCode(arr[i]);
-      }
-      return str;
-    }
-  } as any;
-}
+// 🟢 NEW: Global tracker so the Network Manager knows NOT to send push notifications for this user
+export let currentActiveChat = '';
 
 interface MessageItem {
   msgId?: string;
@@ -38,550 +27,478 @@ interface MessageItem {
   content: string;
   timestamp: string;
   undecryptable?: boolean;
+  status?: 'sending' | 'failed' | 'sent'; // 🟢 Added status for optimistic UI
 }
 
 type CryptoState = 'checking' | 'ready' | 'peer-has-no-key' | 'key-changed' | 'error';
 
-export default function GossipsChatScreen({ route, navigation }: any): React.JSX.Element {
+export default function GossipsChatScreen({ route, navigation }: any) {
   const targetUser = (route.params?.targetUser || '').trim().toLowerCase();
   const insets = useSafeAreaInsets();
+  const { sendStompMessage } = useNetwork(); 
 
   const [messages, setMessages] = useState<MessageItem[]>([]);
   const [chatInput, setChatInput] = useState('');
   const [activeUser, setActiveUser] = useState('');
   const [targetAvatar, setTargetAvatar] = useState<string | null>(null);
-  const [authToken, setAuthToken] = useState<string | null>(null);
-  const [isPremium, setIsPremium] = useState(false);
-  const [isBlocked, setIsBlocked] = useState(false);
 
-  const [isConnecting, setIsConnecting] = useState(true);
-  const [isLinkActive, setIsLinkActive] = useState(false);
   const [cryptoState, setCryptoState] = useState<CryptoState>('checking');
-  const [sending, setSending] = useState(false);
+  const [lastError, setLastError] = useState<string | null>(null);
+  
+  const [keyboardHeight, setKeyboardHeight] = useState(0);
 
-  const clientRef = useRef<Client | null>(null);
   const roomIdRef = useRef<string>('');
   const activeUserRef = useRef<string>('');
   const scrollViewRef = useRef<ScrollView>(null);
-  const pendingOutboundRef = useRef<any[]>([]);
 
   const scrollToEnd = (animated = true) => {
     setTimeout(() => scrollViewRef.current?.scrollToEnd({ animated }), 100);
   };
 
-  const resolveAvatarUrl = (rawPic: any) => {
-    if (!rawPic || typeof rawPic !== 'string' || rawPic.trim() === '') return null;
-    if (rawPic.startsWith('http') || rawPic.startsWith('file://') || rawPic.startsWith('data:')) return rawPic;
-    const cleanBase = BASE_URL.replace(/\/$/, '');
-    const cleanPath = rawPic.replace(/^\//, '');
-    return `${cleanBase}/${cleanPath}`;
-  };
-
-  const getSecureImageSource = (uri: string) => {
-    return { uri };
-  };
+  useEffect(() => {
+    if (Platform.OS === 'android') {
+      const showSubscription = Keyboard.addListener('keyboardDidShow', (e) => {
+        setKeyboardHeight(e.endCoordinates.height);
+        scrollToEnd(true);
+      });
+      const hideSubscription = Keyboard.addListener('keyboardDidHide', () => {
+        setKeyboardHeight(0);
+      });
+      return () => {
+        showSubscription.remove();
+        hideSubscription.remove();
+      };
+    }
+  }, []);
 
   useEffect(() => {
     let isMounted = true;
-    try { initLocalDatabase(); } catch (e) {}
+    currentActiveChat = targetUser; // 🟢 Mark this user as actively being chatted with
 
     const boot = async () => {
       try {
-        // 🟢 FIX: Removed @ symbol from AsyncStorage keys
-        const storedUser = (await AsyncStorage.getItem('active_username')) || '';
-        const token = await AsyncStorage.getItem('ghost_token');
-        setAuthToken(token);
-        
-        const me = storedUser.trim().toLowerCase();
-        setIsPremium(await AsyncStorage.getItem('is_premium') === 'true');
+        initLocalDatabase();
+        const stored = (await AsyncStorage.getItem('@active_username')) || '';
+        const me = stored.trim().toLowerCase();
 
         if (!isMounted) return;
         setActiveUser(me);
         activeUserRef.current = me;
 
-        const unreadKey = `unread_${me}_${targetUser}`;
-        await AsyncStorage.setItem(unreadKey, '0');
-
         if (!targetUser || !me) {
-          setIsConnecting(false);
           setCryptoState('error');
+          setLastError('Missing active username or target user.');
           return;
         }
 
-        try { await ensureKeysPublished(); } catch (e) {}
+        const roomId = [me, targetUser].sort().join('_');
+        roomIdRef.current = roomId;
+        
+        loadLocalHistory(roomId);
+        getAvatarUrl(targetUser).then((url) => { if (isMounted) setTargetAvatar(url); });
+
+        try { await ensureKeysPublished(); } catch (e: any) { }
 
         if (!isMounted) return;
 
         try {
           await getPeerPublicKey(targetUser);
-          if (isMounted) setCryptoState('ready');
-        } catch (e) {
+          setCryptoState('ready');
+        } catch (e: any) {
           if (!isMounted) return;
           if (e instanceof KeyChangedError) setCryptoState('key-changed');
           else if (e instanceof NoKeyError) setCryptoState('peer-has-no-key');
-          else setCryptoState('error');
+          else { setCryptoState('error'); setLastError(`Encryption Key Error: ${e?.message}`); }
         }
-
-        fetchTargetProfile();
-        connect(me, token);
-      } catch (globalError) {
-        setIsConnecting(false);
+      } catch (e: any) {
+        setLastError(e?.message || 'Unknown startup error.');
       }
     };
+
     boot();
+
+    const dbSub = DeviceEventEmitter.addListener('db_chats_updated', () => {
+      if (roomIdRef.current) {
+        loadLocalHistory(roomIdRef.current);
+        scrollToEnd(true);
+      }
+    });
+
     return () => {
       isMounted = false;
-      if (clientRef.current) { clientRef.current.deactivate(); clientRef.current = null; }
+      currentActiveChat = ''; // 🟢 Clear active chat on unmount
+      dbSub.remove();
     };
   }, [targetUser]);
 
-  const fetchTargetProfile = async () => {
-    try {
-      const res = await apiClient.get(`/v1/p2p/profile/${targetUser}`);
-      const rawPic = res.avatarUrl || res.profilePictureUrl || res.data?.avatarUrl || res.data?.profilePictureUrl;
-      setTargetAvatar(resolveAvatarUrl(rawPic));
-    } catch { setTargetAvatar(null); }
-  };
-
-  const connect = async (me: string, token: string | null) => {
-    setIsConnecting(true);
-    if (clientRef.current) { clientRef.current.deactivate(); clientRef.current = null; }
-    if (!token) { setIsConnecting(false); return; }
-
-    const roomId = [me, targetUser].sort().join('_');
-    roomIdRef.current = roomId;
-    loadLocalHistory(roomId);
-
-    const client = new Client({
-      webSocketFactory: () => {
-        const ws = new WebSocket(P2P_WS_URL);
-        const originalSend = ws.send.bind(ws);
-        ws.send = (data: any) => {
-          if (typeof data === 'string') {
-            const encoder = new TextEncoder();
-            const uint8Array = encoder.encode(data);
-            originalSend(uint8Array.buffer);
-          } else if (data && data.buffer instanceof ArrayBuffer) {
-            originalSend(data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength));
-          } else {
-            originalSend(data);
-          }
-        };
-        return ws;
-      },
-      connectHeaders: { Authorization: `Bearer ${token}` },
-      debug: () => {},
-      heartbeatIncoming: 10000,
-      heartbeatOutgoing: 10000,
-      reconnectDelay: 5000,
-
-      onConnect: () => {
-        setIsLinkActive(true);
-        setIsConnecting(false);
-
-        const pending = pendingOutboundRef.current;
-        if (pending.length > 0) {
-          pending.forEach(payload => {
-            client.publish({ destination: '/app/shadow/send', body: JSON.stringify(payload) });
-          });
-          pendingOutboundRef.current = [];
-        }
-
-        client.subscribe(`/topic/shadow-${roomId}`, async (frame) => {
-          let payload: any;
-          try { payload = JSON.parse(frame.body); } catch { return; }
-
-          const sender = (payload.senderUsername || '').trim().toLowerCase();
-          if (sender === activeUserRef.current) return;
-
-          const plaintext = await decryptFromPeer(
-            {
-              v: payload.v ?? CRYPTO_VERSION,
-              ciphertext: payload.ciphertext || payload.encryptedPayload,
-              iv: payload.iv,
-              senderPublicKey: payload.ephemeralPublicKey,
-            },
-            sender || targetUser
-          );
-
-          setMessages((prev) => {
-            if (payload.msgId && prev.some((m) => m.msgId === payload.msgId)) return prev;
-
-            const newMsg = {
-              msgId: payload.msgId,
-              sender_username: sender || targetUser,
-              content: plaintext || 'Message could not be verified',
-              timestamp: new Date().toISOString(),
-              undecryptable: plaintext === null,
-            };
-
-            if (plaintext !== null) {
-              try { saveLocalMessage(payload.roomId || roomId, sender || targetUser, plaintext, null, null, activeUserRef.current); } 
-              catch (e) { }
-            }
-
-            const updated = [...prev, newMsg];
-            return updated.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
-          });
-          scrollToEnd();
-        });
-      },
-      onDisconnect: () => { setIsLinkActive(false); setIsConnecting(true); },
-      onWebSocketClose: () => { setIsLinkActive(false); setIsConnecting(true); },
-      onStompError: () => { setIsLinkActive(false); setIsConnecting(false); },
-    });
-
-    clientRef.current = client;
-    client.activate();
-  };
-
   const loadLocalHistory = (roomId: string) => {
     try {
+      markRoomAsRead(roomId); 
       const history = getLocalMessages(roomId);
-      const sortedHistory = Array.isArray(history) 
-        ? history.sort((a: any, b: any) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime())
-        : [];
-      setMessages(sortedHistory);
+      
+      // Preserve optimistic messages that haven't hit DB yet
+      setMessages((current) => {
+        const dbMsgs = Array.isArray(history) ? (history as MessageItem[]) : [];
+        const pendingMsgs = current.filter(m => m.status === 'sending' || m.status === 'failed');
+        
+        // Remove pending messages if they now exist in DB
+        const pendingNotSaved = pendingMsgs.filter(p => !dbMsgs.some(d => d.msgId === p.msgId));
+        return [...dbMsgs, ...pendingNotSaved];
+      });
+      
       scrollToEnd(false);
-    } catch (e) { setMessages([]); }
+    } catch (e: any) {
+      setMessages([]);
+    }
   };
 
-  const dispatchEncryptedPayload = async (textPayload: string) => {
-    setSending(true);
+  // 🟢 OPTIMISTIC BACKGROUND SENDER
+  const processAndSend = async (plainTextPayload: string, clientMsgId: string, sentAt: string) => {
     const roomId = roomIdRef.current;
-    const clientMsgId = `${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
-
+    
     try {
-      const envelope = await encryptForPeer(textPayload, targetUser);
-      const payloadObj = {
+      const envelope = await encryptForPeer(plainTextPayload, targetUser);
+
+      sendStompMessage('/app/shadow/send', {
         v: envelope.v,
         msgId: clientMsgId,
         roomId,
         senderUsername: activeUserRef.current,
         targetUsername: targetUser,
-        senderId: 0,
+        sentAt,
         ephemeralPublicKey: envelope.senderPublicKey,
         ciphertext: envelope.ciphertext,
-        encryptedPayload: envelope.ciphertext,
         iv: envelope.iv,
-        authTag: '',
-      };
+      });
 
-      saveLocalMessage(roomId, activeUserRef.current, textPayload, null, null, targetUser);
-      setMessages((prev) => [...prev, {
-        msgId: clientMsgId,
-        sender_username: activeUserRef.current,
-        content: textPayload,
-        timestamp: new Date().toISOString(),
-      }]);
+      // Save to SQLite (Triggers reload automatically)
+      saveLocalMessage(roomId, activeUserRef.current, plainTextPayload, null, null, targetUser, clientMsgId, sentAt);
+      markRoomAsRead(roomId);
       
-      setChatInput('');
-      scrollToEnd();
-
-      const client = clientRef.current;
-      if (client?.connected) {
-        client.publish({ destination: '/app/shadow/send', body: JSON.stringify(payloadObj) });
-      } else {
-        pendingOutboundRef.current.push(payloadObj);
-      }
     } catch (e: any) {
       if (e instanceof KeyChangedError) setCryptoState('key-changed');
       else if (e instanceof NoKeyError) setCryptoState('peer-has-no-key');
-      else Alert.alert('Could not send', e?.message || 'Encryption failed.');
-    } finally {
-      setSending(false);
+      
+      // Mark as failed in UI if cryptography fails
+      setMessages((prev) => prev.map(m => m.msgId === clientMsgId ? { ...m, status: 'failed' } : m));
+      Alert.alert('Could not send', e?.message || 'Encryption failed.');
     }
   };
 
-  const handleSend = () => {
+  // 🟢 FAST OPTIMISTIC UI: No loading spinners, immediate render
+  const handleSend = async () => {
     const text = chatInput.trim();
-    if (!text || !activeUserRef.current || sending || isBlocked) return;
-    if (cryptoState !== 'ready') return;
-    dispatchEncryptedPayload(text);
-  };
-
-  const handleAttachment = async () => {
-    if (isBlocked) return;
-    if (Platform.OS === 'web') {
-      launchImagePicker();
+    if (!text) return;
+    
+    if (cryptoState !== 'ready') {
+      Alert.alert('Cannot encrypt', 'Encryption keys are not ready for this conversation.');
       return;
     }
 
-    Alert.alert(
-      'Attach File',
-      isPremium ? 'Select a photo or file to send.' : 'Free users can send compressed photos. Upgrade to Premium for uncompressed documents.',
-      [
-        { text: 'Send Photo', onPress: launchImagePicker },
-        { text: 'Send Document (Premium)', onPress: () => {
-            if(!isPremium) Alert.alert('Premium Required', 'Upgrade to send raw documents.');
-        }},
-        { text: 'Cancel', style: 'cancel' }
-      ]
-    );
-  };
-
-  const launchImagePicker = async () => {
-    let result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ImagePicker.MediaTypeOptions.Images,
-      allowsEditing: true,
-      quality: isPremium ? 0.5 : 0.1, 
-      base64: true, 
-    });
+    setChatInput(''); // 1. Clear input instantly
     
-    if (!result.canceled && result.assets[0].base64) {
-      try {
-        const base64String = `data:image/jpeg;base64,${result.assets[0].base64}`;
-        if (base64String.length > 700000) {
-          Alert.alert("Image Too Large", "Please pick a smaller image or crop it before sending.");
-          return;
-        }
-        await dispatchEncryptedPayload(`[B64_IMG]${base64String}`);
-      } catch (e: any) {
-        Alert.alert("Send Failed", "Could not send image.");
-      }
-    }
+    const clientMsgId = `${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
+    const sentAt = new Date().toISOString();
+
+    // 2. Create Optimistic Message
+    const optimisticMsg: MessageItem = {
+      msgId: clientMsgId,
+      sender_username: activeUserRef.current,
+      content: text,
+      timestamp: sentAt,
+      status: 'sending'
+    };
+
+    // 3. Inject to UI Instantly
+    setMessages((prev) => [...prev, optimisticMsg]);
+    scrollToEnd(true);
+
+    // 4. Encrypt and Send in background
+    processAndSend(text, clientMsgId, sentAt);
   };
 
-  const handleMenuOptions = () => {
-    Alert.alert(
-      'Chat Options',
-      `Options for @${targetUser}`,
-      [
-        { text: 'Clear Local History', style: 'destructive', onPress: () => {
-            setMessages([]); 
-            Alert.alert('Cleared', 'Local history cleared.');
-        }},
-        { text: isBlocked ? 'Unblock User' : 'Block User', style: 'destructive', onPress: () => setIsBlocked(!isBlocked) },
-        { text: 'Cancel', style: 'cancel' }
-      ]
-    );
+  const handleAttachImage = async () => {
+    try {
+      const permissionResult = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (permissionResult.granted === false) {
+        Alert.alert("Permission Refused", "You must allow access to your photos to send an image.");
+        return;
+      }
+
+      let result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        allowsEditing: true,
+        quality: 0.2, 
+        base64: true,
+      });
+
+      if (!result.canceled && result.assets && result.assets[0].base64) {
+        const imagePayload = `DATA_IMAGE::data:image/jpeg;base64,${result.assets[0].base64}`;
+        const clientMsgId = `${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
+        const sentAt = new Date().toISOString();
+        
+        // Optimistic UI for Image
+        setMessages((prev) => [...prev, { msgId: clientMsgId, sender_username: activeUserRef.current, content: imagePayload, timestamp: sentAt, status: 'sending' }]);
+        scrollToEnd(true);
+
+        processAndSend(imagePayload, clientMsgId, sentAt);
+      }
+    } catch (e) {
+      Alert.alert("Gallery Error", "Could not process photo.");
+    }
   };
 
   const handleAcceptKeyChange = async () => {
-    try { await acceptPeerKeyChange(targetUser); setCryptoState('ready'); } 
+    try { await acceptPeerKeyChange(targetUser); setCryptoState('ready'); }
     catch { setCryptoState('error'); }
   };
 
-  const showSafetyNumber = async () => {
-    const num = await safetyNumber(targetUser);
-    Alert.alert('Safety number', num ? `${num}\n\nCompare this with @${targetUser} in person.` : 'Not available yet.');
+  const showOptionsMenu = () => {
+    Alert.alert(
+      `Options for @${targetUser}`,
+      'Manage conversation privacy:',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { 
+          text: 'Report User', 
+          onPress: () => {
+            Alert.alert(
+              'Report User',
+              `Report @${targetUser} to moderators?`,
+              [
+                { text: 'Cancel', style: 'cancel' },
+                {
+                  text: 'Report',
+                  style: 'destructive',
+                  onPress: async () => {
+                    try {
+                      // 🟢 Hits the same endpoint as AirDrops
+                      await apiClient.post(API_ROUTES.CAMPFIRE.REPORT(targetUser));
+                      Alert.alert('Reported', `@${targetUser} has been reported to moderation.`);
+                    } catch (e: any) {
+                      Alert.alert('Error', e?.message || 'Could not report user.');
+                    }
+                  }
+                }
+              ]
+            );
+          } 
+        },
+        { 
+          text: 'Clear Chat History', 
+          style: 'destructive',
+          onPress: () => {
+            Alert.alert('Delete History', 'This will permanently remove all messages from your device.', [
+              { text: 'Cancel', style: 'cancel' },
+              { text: 'Clear', style: 'destructive', onPress: () => {
+                if (roomIdRef.current) {
+                  clearLocalMessages(roomIdRef.current);
+                  navigation.goBack(); // Go back to inbox since chat is empty
+                }
+              }}
+            ]);
+          } 
+        },
+        { 
+          text: 'Block & Delete Chat', 
+          style: 'destructive',
+          onPress: () => {
+            Alert.alert('Block User', `You will no longer receive messages from @${targetUser}, and your chat history will be wiped.`, [
+              { text: 'Cancel', style: 'cancel' },
+              { text: 'Block', style: 'destructive', onPress: () => {
+                // 🟢 1. Block locally in SQLite
+                import('../services/LocalDB').then(({ blockLocalUser }) => {
+                   blockLocalUser(targetUser);
+                });
+                // 🟢 2. Vaporize history
+                if (roomIdRef.current) clearLocalMessages(roomIdRef.current);
+                // 🟢 3. Leave the room
+                navigation.goBack();
+              }}
+            ]);
+          } 
+        },
+      ]
+    );
+  };
+  const formatTime = (iso: string) => {
+    const d = new Date(iso);
+    if (isNaN(d.getTime())) return '';
+    const today = new Date();
+    return d.toDateString() === today.toDateString()
+      ? d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+      : `${d.toLocaleDateString([], { day: '2-digit', month: 'short' })} ${d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
   };
 
-  const formatTime = (isoString: string) => {
-    try {
-      const date = new Date(isoString);
-      if (isNaN(date.getTime())) throw new Error();
-      return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-    } catch {
-      return new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-    }
-  };
-
-  const canType = cryptoState === 'ready' && !isBlocked;
-
-  const renderBanner = () => {
-    if (isBlocked) {
-      return (
-        <View style={[styles.banner, styles.bannerDanger]}>
-          <Feather name="slash" size={12} color="#FF3B30" />
-          <Text style={[styles.bannerText, { color: '#FF3B30' }]}> User is blocked. Messaging disabled.</Text>
-        </View>
-      );
-    }
-    if (cryptoState === 'ready') {
-      return (
-        <TouchableOpacity style={[styles.banner, styles.bannerOk]} onPress={showSafetyNumber}>
-          <Feather name="lock" size={12} color="#00C851" />
-          <Text style={[styles.bannerText, { color: '#00C851' }]}> End-to-end encrypted. Tap to verify.</Text>
-        </TouchableOpacity>
-      );
-    }
+  const renderStatusStrip = () => {
     if (cryptoState === 'key-changed') {
       return (
-        <TouchableOpacity style={[styles.banner, styles.bannerDanger]} onPress={handleAcceptKeyChange}>
+        <TouchableOpacity style={[styles.strip, styles.stripDanger]} onPress={handleAcceptKeyChange}>
           <Feather name="alert-triangle" size={12} color="#FF3B30" />
-          <Text style={[styles.bannerText, { color: '#FF3B30' }]}> @{targetUser}'s key changed. Tap to trust.</Text>
+          <Text style={[styles.stripText, { color: '#FF3B30' }]}>  @{targetUser}'s key changed. Tap to verify.</Text>
         </TouchableOpacity>
       );
     }
     if (cryptoState === 'peer-has-no-key') {
       return (
-        <View style={[styles.banner, styles.bannerWarn]}>
+        <View style={[styles.strip, styles.stripWarn]}>
           <Feather name="clock" size={12} color="#D1B000" />
-          <Text style={[styles.bannerText, { color: '#D1B000' }]}> Waiting for @{targetUser} to publish keys.</Text>
+          <Text style={[styles.stripText, { color: '#D1B000' }]}>  Waiting for @{targetUser} to log in.</Text>
         </View>
       );
     }
-    if (cryptoState === 'checking') {
+    if (cryptoState === 'ready') {
       return (
-        <View style={[styles.banner, styles.bannerWarn]}>
-          <Feather name="loader" size={12} color="#8E95A5" />
-          <Text style={[styles.bannerText, { color: '#8E95A5' }]}> Establishing encryption keys...</Text>
+        <View style={[styles.strip, styles.stripOk]}>
+          <Feather name="lock" size={12} color="#A3A3A3" />
+          <Text style={[styles.stripText, { color: '#A3A3A3' }]}>  End-to-end encrypted</Text>
         </View>
       );
     }
-    return (
-      <View style={[styles.banner, styles.bannerDanger]}>
-        <Feather name="alert-triangle" size={12} color="#FF3B30" />
-        <Text style={[styles.bannerText, { color: '#FF3B30' }]}> Encryption unavailable. Cannot send.</Text>
-      </View>
-    );
+    return null;
   };
 
-  return (
-    <SafeAreaView style={styles.safeContainer} edges={['top']}>
-      <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={styles.container}>
-        <View style={styles.header}>
-          <TouchableOpacity style={styles.backBtn} onPress={() => (navigation.canGoBack() ? navigation.goBack() : navigation.navigate('MainTabs'))}>
-            <Feather name="arrow-left" size={24} color="#FFFFFF" />
-          </TouchableOpacity>
-
-          <View style={styles.activeHeader}>
-            <View style={styles.avatarPlaceholder}>
-              {targetAvatar ? (
-                <Image source={getSecureImageSource(targetAvatar)} style={{ width: '100%', height: '100%' }} />
-              ) : (
-                <Text style={styles.avatarText}>{targetUser ? targetUser[0]?.toUpperCase() : '?'}</Text>
-              )}
-            </View>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.headerTextActive}>@{targetUser || 'unknown'}</Text>
-              <Text style={styles.statusText}>
-                {isConnecting ? 'connecting...' : isLinkActive ? 'connected' : 'offline'}
-              </Text>
-            </View>
+  const renderChatBody = () => (
+    <>
+      <ScrollView
+        ref={scrollViewRef}
+        style={styles.scrollArea}
+        contentContainerStyle={{ paddingHorizontal: 16, paddingTop: 16, paddingBottom: 16 }}
+        onContentSizeChange={() => scrollToEnd(false)}
+      >
+        {messages.length === 0 ? (
+          <View style={styles.empty}>
+            <Feather name="message-square" size={40} color="#262626" />
+            <Text style={styles.emptyText}>No messages yet</Text>
+            <Text style={styles.emptySub}>Say something. Messages will appear here.</Text>
           </View>
-
-          <TouchableOpacity onPress={handleMenuOptions} style={styles.menuBtn}>
-            <Feather name="more-vertical" size={20} color="#FFFFFF" />
-          </TouchableOpacity>
-        </View>
-
-        <ScrollView ref={scrollViewRef} style={styles.chatArea} contentContainerStyle={{ paddingBottom: 20 }}>
-          {renderBanner()}
-
-          {messages.map((msg, idx) => {
-            const msgSender = (msg.sender_username || '').trim().toLowerCase();
-            const isMe = msgSender === activeUser;
-
-            const isBase64Image = msg.content && msg.content.startsWith('[B64_IMG]');
-            const base64DataUri = isBase64Image ? msg.content.replace('[B64_IMG]', '') : '';
+        ) : (
+          messages.map((item, i) => {
+            const isMe = (item.sender_username || '').trim().toLowerCase() === activeUser;
+            const isImage = item.content?.startsWith('DATA_IMAGE::');
+            const displayContent = isImage ? item.content.replace('DATA_IMAGE::', '') : item.content;
 
             return (
-              <View key={msg.msgId || idx} style={[styles.bubbleWrapper, isMe ? styles.myBubbleWrapper : styles.theirBubbleWrapper]}>
-                
-                {!isMe && (
-                  <View style={styles.chatAvatarContainer}>
-                    {targetAvatar ? (
-                      <Image source={getSecureImageSource(targetAvatar)} style={styles.chatAvatar} />
-                    ) : (
-                      <View style={styles.chatAvatarFallback}>
-                        <Text style={styles.chatAvatarText}>{targetUser[0]?.toUpperCase()}</Text>
-                      </View>
-                    )}
-                  </View>
-                )}
-
-                <View style={[
-                  styles.bubble,
-                  isMe ? styles.myBubble : styles.theirBubble,
-                  msg.undecryptable ? styles.badBubble : null,
-                  isBase64Image ? { paddingHorizontal: 4, paddingVertical: 4 } : null
-                ]}>
-                  {isBase64Image ? (
-                    <Image source={{ uri: base64DataUri }} style={styles.chatImage} resizeMode="cover" />
+              <View key={item.msgId || i.toString()} style={[styles.row, isMe ? styles.rowMine : styles.rowTheirs]}>
+                <View style={[styles.bubble, isMe ? styles.bubbleMine : styles.bubbleTheirs, item.undecryptable && styles.bubbleBad]}>
+                  {isImage ? (
+                    <Image source={{ uri: displayContent }} style={styles.chatImage} resizeMode="cover" />
                   ) : (
-                    <Text style={[styles.bubbleText, { color: '#E9EDEF' }, msg.undecryptable ? styles.badBubbleText : null]}>
-                      {msg.content}
-                    </Text>
+                    <Text style={[styles.bubbleText, item.undecryptable && styles.bubbleBadText]}>{displayContent}</Text>
                   )}
-
-                  <Text style={[
-                    styles.timestamp, 
-                    isMe ? styles.myTimestamp : styles.theirTimestamp,
-                    isBase64Image ? styles.mediaTimestamp : null
-                  ]}>
-                    {formatTime(msg.timestamp)}
-                  </Text>
+                  
+                  <View style={{ flexDirection: 'row', justifyContent: 'flex-end', alignItems: 'center', marginTop: 3 }}>
+                    <Text style={styles.time}>{formatTime(item.timestamp)}</Text>
+                    {/* 🟢 Optimistic Status Indicators */}
+                    {isMe && item.status === 'sending' && <Feather name="clock" size={10} color="rgba(255,255,255,0.4)" style={{ marginLeft: 4 }} />}
+                    {isMe && item.status === 'failed' && <Feather name="alert-circle" size={10} color="#FF3B30" style={{ marginLeft: 4 }} />}
+                    {isMe && !item.status && <Feather name="check" size={10} color="rgba(255,255,255,0.4)" style={{ marginLeft: 4 }} />}
+                  </View>
                 </View>
               </View>
             );
-          })}
-        </ScrollView>
+          })
+        )}
+      </ScrollView>
 
-        <View style={[styles.inputRow, { paddingBottom: Math.max(12, insets.bottom) }]}>
-          <TouchableOpacity style={styles.attachBtn} onPress={handleAttachment}>
-            <Feather name="paperclip" size={20} color="#8E95A5" />
+      <View style={[styles.composer, { paddingBottom: Math.max(insets.bottom, 10) }]}>
+        <TouchableOpacity style={styles.attachBtn} onPress={handleAttachImage}>
+          <Feather name="image" size={22} color="#A3A3A3" />
+        </TouchableOpacity>
+
+        <TextInput
+          style={styles.input}
+          value={chatInput}
+          onChangeText={setChatInput}
+          placeholder={`Message @${targetUser}…`}
+          placeholderTextColor="#666666"
+          multiline
+        />
+        <TouchableOpacity style={[styles.sendBtn, !chatInput.trim() && styles.sendBtnOff]} onPress={handleSend} disabled={!chatInput.trim()}>
+          <Feather name="send" size={18} color={chatInput.trim() ? '#FFFFFF' : '#666666'} />
+        </TouchableOpacity>
+      </View>
+    </>
+  );
+
+  return (
+    <View style={[styles.container, { paddingTop: insets.top }]}>
+      <View style={styles.header}>
+        <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1 }}>
+          <TouchableOpacity style={styles.backBtn} onPress={() => (navigation.canGoBack() ? navigation.goBack() : navigation.navigate('MainTabs'))} hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}>
+            <Feather name="arrow-left" size={24} color="#FFFFFF" />
           </TouchableOpacity>
-
-          <TextInput
-            style={styles.input}
-            value={chatInput}
-            onChangeText={setChatInput}
-            placeholder={isBlocked ? 'User Blocked' : cryptoState !== 'ready' ? 'Encryption syncing...' : 'Message...'}
-            placeholderTextColor="#666666"
-            editable={canType}
-            multiline
-          />
-
-          <TouchableOpacity
-            style={[styles.sendBtn, (!chatInput.trim() || !canType) && { backgroundColor: '#1A1A1A' }]}
-            onPress={handleSend}
-            disabled={!canType || !chatInput.trim() || sending}
-          >
-            <Feather name="send" size={18} color={chatInput.trim() && canType ? '#FFFFFF' : '#666666'} style={{ marginLeft: -2 }} />
-          </TouchableOpacity>
+          <View style={styles.identity}>
+            <View style={styles.avatar}>
+              {targetAvatar ? <Image source={{ uri: targetAvatar }} style={styles.avatarImg} /> : <Text style={styles.avatarLetter}>{targetUser ? targetUser[0]?.toUpperCase() : '?'}</Text>}
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.peerName} numberOfLines={1}>@{targetUser || 'unknown'}</Text>
+            </View>
+          </View>
         </View>
-      </KeyboardAvoidingView>
-    </SafeAreaView>
+        <TouchableOpacity style={styles.menuBtn} onPress={showOptionsMenu} hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}>
+          <Feather name="more-vertical" size={20} color="#FFFFFF" />
+        </TouchableOpacity>
+      </View>
+
+      {renderStatusStrip()}
+      {lastError && (
+        <View style={styles.errorBox}>
+          <Text style={styles.errorTitle}>SYSTEM NOTICE</Text>
+          <Text style={styles.errorText}>{lastError}</Text>
+        </View>
+      )}
+
+      {Platform.OS === 'ios' ? (
+        <KeyboardAvoidingView style={{ flex: 1 }} behavior="padding" keyboardVerticalOffset={insets.top + 60}>
+          {renderChatBody()}
+        </KeyboardAvoidingView>
+      ) : (
+        <View style={{ flex: 1, paddingBottom: keyboardHeight }}>
+          {renderChatBody()}
+        </View>
+      )}
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
-  safeContainer: { flex: 1, backgroundColor: '#1A1A1A' },
   container: { flex: 1, backgroundColor: '#0A0A0A' },
-  header: { flexDirection: 'row', alignItems: 'center', padding: 16, backgroundColor: '#1A1A1A', borderBottomWidth: 1, borderColor: '#262626' },
-  backBtn: { marginRight: 16 },
-  activeHeader: { flexDirection: 'row', alignItems: 'center', flex: 1 },
-  avatarPlaceholder: { width: 36, height: 36, borderRadius: 18, backgroundColor: '#262626', justifyContent: 'center', alignItems: 'center', marginRight: 12, overflow: 'hidden' },
-  avatarText: { color: '#FFFFFF', fontWeight: 'bold', fontSize: 16 },
-  headerTextActive: { fontSize: 16, fontWeight: '700', color: '#FFFFFF' },
-  statusText: { fontSize: 11, color: '#00C851', fontWeight: '600' },
-  menuBtn: { padding: 4 },
-
-  chatArea: { flex: 1, padding: 16 },
-  banner: { flexDirection: 'row', padding: 10, borderRadius: 8, marginBottom: 20, alignItems: 'center', justifyContent: 'center' },
-  bannerOk: { backgroundColor: 'rgba(0, 200, 81, 0.1)' },
-  bannerWarn: { backgroundColor: 'rgba(209, 176, 0, 0.1)' },
-  bannerDanger: { backgroundColor: 'rgba(255, 59, 48, 0.1)' },
-  bannerText: { fontSize: 11, textAlign: 'center', fontWeight: '600', flexShrink: 1 },
-  
-  bubbleWrapper: { marginBottom: 16, flexDirection: 'row', width: '100%', alignItems: 'flex-end' },
-  myBubbleWrapper: { justifyContent: 'flex-end' },
-  theirBubbleWrapper: { justifyContent: 'flex-start' },
-  
-  chatAvatarContainer: { marginRight: 8, marginBottom: 4 },
-  chatAvatar: { width: 26, height: 26, borderRadius: 13 },
-  chatAvatarFallback: { width: 26, height: 26, borderRadius: 13, backgroundColor: '#262626', justifyContent: 'center', alignItems: 'center' },
-  chatAvatarText: { color: '#8E95A5', fontSize: 12, fontWeight: 'bold' },
-
-  bubble: { paddingHorizontal: 14, paddingVertical: 10, maxWidth: '75%' },
-  myBubble: { backgroundColor: '#333333', borderTopLeftRadius: 16, borderTopRightRadius: 4, borderBottomLeftRadius: 16, borderBottomRightRadius: 16 },
-  theirBubble: { backgroundColor: '#1A1A1A', borderTopLeftRadius: 4, borderTopRightRadius: 16, borderBottomRightRadius: 16, borderBottomLeftRadius: 16 },
-  badBubble: { backgroundColor: '#2A1A1A', borderWidth: 1, borderColor: '#5C2A2A' },
-  
-  bubbleText: { fontSize: 15, lineHeight: 20 },
-  badBubbleText: { color: '#FF8A80', fontStyle: 'italic' },
-  
-  chatImage: { width: 220, height: 220, borderRadius: 12, backgroundColor: '#262626' },
-  mediaTimestamp: { position: 'absolute', bottom: 10, right: 12, color: '#FFFFFF', backgroundColor: 'rgba(0,0,0,0.6)', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 8, overflow: 'hidden' },
-
-  timestamp: { fontSize: 10, alignSelf: 'flex-end', marginTop: 4, marginLeft: 12 },
-  myTimestamp: { color: 'rgba(255,255,255,0.6)' },
-  theirTimestamp: { color: 'rgba(255,255,255,0.5)' },
-  
-  inputRow: { flexDirection: 'row', alignItems: 'flex-end', padding: 12, backgroundColor: '#1A1A1A' },
-  attachBtn: { width: 44, height: 44, justifyContent: 'center', alignItems: 'center', marginRight: 4 },
-  input: { flex: 1, backgroundColor: '#262626', borderRadius: 24, paddingHorizontal: 16, paddingTop: 12, paddingBottom: 12, color: '#FFFFFF', fontSize: 15, maxHeight: 100, minHeight: 44 },
+  header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16, paddingBottom: 12, paddingTop: 10, backgroundColor: '#0A0A0A', borderBottomWidth: 1, borderBottomColor: '#1A1A1A' },
+  backBtn: { marginRight: 14 },
+  menuBtn: { marginLeft: 10 },
+  identity: { flexDirection: 'row', alignItems: 'center', flex: 1 },
+  avatar: { width: 36, height: 36, borderRadius: 18, backgroundColor: '#262626', justifyContent: 'center', alignItems: 'center', marginRight: 12, overflow: 'hidden' },
+  avatarImg: { width: '100%', height: '100%' },
+  avatarLetter: { color: '#FFFFFF', fontWeight: 'bold', fontSize: 15 },
+  peerName: { fontSize: 16, fontWeight: '700', color: '#FFFFFF' },
+  composer: { flexDirection: 'row', alignItems: 'flex-end', paddingHorizontal: 12, paddingTop: 10, backgroundColor: '#0A0A0A', borderTopWidth: 1, borderTopColor: '#1A1A1A' },
+  attachBtn: { padding: 10, paddingBottom: 12, marginRight: 4 },
+  input: { flex: 1, backgroundColor: '#1A1A1A', borderRadius: 22, paddingHorizontal: 16, paddingTop: 11, paddingBottom: 11, color: '#FFFFFF', fontSize: 15, maxHeight: 110, minHeight: 44, borderWidth: 1, borderColor: '#262626' },
   sendBtn: { backgroundColor: '#333333', width: 44, height: 44, borderRadius: 22, justifyContent: 'center', alignItems: 'center', marginLeft: 8 },
+  sendBtnOff: { backgroundColor: '#1A1A1A' },
+  strip: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', paddingVertical: 7, paddingHorizontal: 12, backgroundColor: '#111111', borderBottomWidth: 1, borderBottomColor: '#1A1A1A' },
+  stripOk: { backgroundColor: 'rgba(255,255,255,0.05)' },
+  stripWarn: { backgroundColor: 'rgba(209,176,0,0.08)' },
+  stripDanger: { backgroundColor: 'rgba(255,59,48,0.10)' },
+  stripText: { fontSize: 10.5, fontWeight: '600', flexShrink: 1 },
+  errorBox: { backgroundColor: 'rgba(255,59,48,0.08)', borderTopWidth: 1, borderBottomWidth: 1, borderColor: '#5C2A2A', paddingHorizontal: 16, paddingVertical: 8 },
+  errorTitle: { color: '#FF8A80', fontSize: 9.5, fontWeight: '800', letterSpacing: 1, marginBottom: 3 },
+  errorText: { color: '#FFB3AA', fontSize: 12 },
+  scrollArea: { flex: 1 },
+  row: { marginBottom: 10, flexDirection: 'row', width: '100%' },
+  rowMine: { justifyContent: 'flex-end' },
+  rowTheirs: { justifyContent: 'flex-start' },
+  bubble: { paddingHorizontal: 13, paddingVertical: 9, borderRadius: 16, maxWidth: '78%' },
+  bubbleMine: { backgroundColor: '#262626', borderTopLeftRadius: 16, borderBottomLeftRadius: 16, borderTopRightRadius: 16, borderBottomRightRadius: 4, borderWidth: 1, borderColor: '#333333' },
+  bubbleTheirs: { backgroundColor: '#121212', borderTopLeftRadius: 16, borderBottomRightRadius: 16, borderTopRightRadius: 16, borderBottomLeftRadius: 4, borderWidth: 1, borderColor: '#1F1F1F' },
+  bubbleBad: { backgroundColor: '#2A1A1A', borderWidth: 1, borderColor: '#5C2A2A' },
+  bubbleText: { fontSize: 15, lineHeight: 20, color: '#E9EDEF' },
+  bubbleBadText: { color: '#FF8A80', fontStyle: 'italic' },
+  time: { fontSize: 9.5, color: 'rgba(255,255,255,0.40)' },
+  chatImage: { width: 220, height: 220, borderRadius: 8, marginBottom: 4 },
+  empty: { alignItems: 'center', marginTop: 60, paddingHorizontal: 40 },
+  emptyText: { color: '#FFFFFF', fontSize: 15, fontWeight: '800', marginTop: 14 },
+  emptySub: { color: '#666666', fontSize: 12.5, textAlign: 'center', marginTop: 6, lineHeight: 18 },
 });

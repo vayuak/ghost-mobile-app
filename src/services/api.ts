@@ -2,12 +2,11 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 
 // 🟢 DYNAMIC ENVIRONMENT CONFIGURATION
 const DEFAULT_URL = 'https://mode-production-6bbb.up.railway.app';
-export const BASE_URL = process.env.EXPO_PUBLIC_API_BASE_URL || DEFAULT_URL;
+export const BASE_URL = (process.env.EXPO_PUBLIC_API_BASE_URL || DEFAULT_URL).replace(/\/$/, '');
 
 // Convert base HTTP/HTTPS URL into WSS/WS for WebSockets automatically
 const getWsUrl = (baseUrl: string) => {
   const cleanUrl = baseUrl.replace(/\/$/, '');
-  // 🟢 FIX: Added /ws-chat so the Gateway StripPrefix leaves the correct endpoint
   if (cleanUrl.startsWith('https://')) {
     return cleanUrl.replace('https://', 'wss://') + '/v1/ws/ws-chat';
   }
@@ -17,21 +16,80 @@ const getWsUrl = (baseUrl: string) => {
 export const P2P_WS_URL = getWsUrl(BASE_URL);
 
 const GEMINI_API_KEY = process.env.EXPO_PUBLIC_GEMINI_API_KEY || 'YOUR_GEMINI_API_KEY_HERE';
-const SHIELD_KEY = process.env.EXPO_PUBLIC_SHIELD_KEY || '';
+// 🟢 FIX: Hardcoded fallback ensures APK doesn't send empty gateway keys
+const SHIELD_KEY = process.env.EXPO_PUBLIC_SHIELD_KEY || 'gsk_live_8f7b2c9a4e1d5f6e8a0b3c2d1e4f5a6b7c8d9e0f1a2b3c4d5';
 
-if (!SHIELD_KEY) {
-  console.warn("⚠️ EXPO_PUBLIC_SHIELD_KEY is missing from .env!");
-}
-
+// 🟢 CENTRALIZED API ROUTE DICTIONARY
+export const API_ROUTES = {
+  AUTH: {
+    LOGIN: '/v1/auth/login',
+    REGISTER: '/v1/auth/register',
+    VERIFY_OTP: '/v1/auth/verify-otp',
+    CHECK_USERNAME: '/v1/auth/check-username',
+    FORGOT_PASSWORD: '/v1/auth/forgot-password',
+    RESET_PASSWORD: '/v1/auth/reset-password',
+    ME: '/v1/auth/me',
+    LOGOUT: '/v1/auth/logout',
+    // 🟢 NEW: End-to-End Encryption Key Directory
+    PUBLISH_KEY: '/v1/auth/keys',
+    GET_KEY: (username: string) => `/v1/auth/keys/${encodeURIComponent(username)}`,
+  },
+  // ... rest of your routes
+  CAMPFIRE: {
+    SCAN: '/v1/campfire/scan',
+    DROP: '/v1/campfire/drop',
+    REPORT: (username: string) => `/v1/campfire/report/${username}`,
+    PING_LOCATION: '/v1/campfire/ping-location',
+  },
+  SEARCH: {
+    FEED: (city: string, page: number = 0, size: number = 20) => `/v1/social/feed?city=${encodeURIComponent(city)}&page=${page}&size=${size}`,
+    DISCOVER: (keyword: string) => `/v1/social/search?keyword=${encodeURIComponent(keyword)}`,
+  },
+ SOCIAL: {
+    CITIES: '/v1/social/meta/tier-one-cities',
+    CREATE_POST: '/v1/social/post/upload-and-create',
+    // 🟢 NEW: Fetch a user's public profile details
+    USER_PROFILE: (username: string) => `/v1/social/user/${encodeURIComponent(username)}/profile`,
+  },
+  // ...
+  PROFILE: {
+    MY_POSTS: '/v1/social/post/my-posts',
+    UPDATE_DP: '/v1/social/user/profile/upload-and-update',
+    DELETE_POST: (postId: string | number) => `/v1/social/post/${postId}/delete`,
+    // 🟢 NEW: Fetch a specific user's public posts
+    USER_POSTS: (username: string) => `/v1/social/post/user/${encodeURIComponent(username)}`,
+  },
+  POST: {
+    GET_SINGLE: (postId: string | number) => `/v1/social/post/${postId}`,
+    VOTE: (postId: string | number, direction: string) => `/v1/social/post/${postId}/vote?direction=${direction}`,
+    GET_COMMENTS: (postId: string | number, timestamp: number) => `/v1/social/post/${postId}/comments?t=${timestamp}`,
+    CREATE_COMMENT: (postId: string | number) => `/v1/social/post/${postId}/comment`,
+    DELETE_COMMENT: (commentId: string | number) => `/v1/social/post/comment/${commentId}`,
+  }
+};
 let onSessionExpiredCallback: (() => void) | null = null;
 
 export const setSessionExpiredHandler = (handler: () => void) => {
   onSessionExpiredCallback = handler;
 };
 
+// 🟢 FIX: Safely checks both key variants
+const getStoredToken = async (): Promise<string | null> => {
+  try {
+    const token = await AsyncStorage.getItem('ghost_token');
+    if (token) return token;
+    return await AsyncStorage.getItem('@ghost_token');
+  } catch {
+    return null;
+  }
+};
+
 const wipeSession = async () => {
-  // 🟢 FIX: Removed @ symbols
-  await AsyncStorage.multiRemove(['ghost_token', 'active_username', 'user_avatar']);
+  await AsyncStorage.multiRemove([
+    'ghost_token', '@ghost_token', 
+    'active_username', '@active_username', 
+    'user_avatar', '@user_avatar'
+  ]);
   if (onSessionExpiredCallback) onSessionExpiredCallback();
 };
 
@@ -41,15 +99,12 @@ export const uploadMultipart = (
   onProgress?: (percent: number) => void
 ): Promise<any> => {
   return new Promise(async (resolve, reject) => {
-    let token: string | null = null;
-    try {
-      token = await AsyncStorage.getItem('ghost_token'); // 🟢 FIX: Removed @ symbol
-    } catch {
-      token = null;
-    }
+    const token = await getStoredToken();
 
     const xhr = new XMLHttpRequest();
-    xhr.open('POST', `${BASE_URL}${endpoint}`);
+    // 🟢 FIX: Ensure slash exists between URL and endpoint
+    const cleanEndpoint = endpoint.startsWith('/') ? endpoint : `/${endpoint}`;
+    xhr.open('POST', `${BASE_URL}${cleanEndpoint}`);
 
     xhr.setRequestHeader('Accept', 'application/json');
     xhr.setRequestHeader('X-Ghost-Shield-Key', SHIELD_KEY);
@@ -115,8 +170,10 @@ export const buildFilePart = (asset: { uri: string; fileName?: string | null; mi
 
 export const apiClient = {
   async request(endpoint: string, options: RequestInit = {}) {
-    const url = `${BASE_URL}${endpoint}`;
-    const token = await AsyncStorage.getItem('ghost_token'); // 🟢 FIX: Removed @ symbol
+    // 🟢 FIX: Ensure slash exists between URL and endpoint
+    const cleanEndpoint = endpoint.startsWith('/') ? endpoint : `/${endpoint}`;
+    const url = `${BASE_URL}${cleanEndpoint}`;
+    const token = await getStoredToken();
     const headers = new Headers(options.headers || {});
 
     const isFormData = options.body != null && typeof (options.body as any).append === 'function';
@@ -201,6 +258,18 @@ export const apiClient = {
     });
   },
 
+  patch(endpoint: string, body?: any, options?: RequestInit) {
+    const isFormData = body != null && typeof body.append === 'function';
+    if (isFormData) {
+      throw new Error(`Use uploadMultipart() for multipart PATCHs, not apiClient (endpoint: ${endpoint}).`);
+    }
+    return this.request(endpoint, {
+      ...options,
+      method: 'PATCH',
+      body: body ? JSON.stringify(body) : undefined,
+    });
+  },
+
   delete(endpoint: string, options?: RequestInit) {
     return this.request(endpoint, { ...options, method: 'DELETE' });
   },
@@ -233,7 +302,7 @@ export const apiClient = {
 
 export const systemLogout = async () => {
   try {
-    await apiClient.post('/v1/auth/logout');
+    await apiClient.post(API_ROUTES.AUTH.LOGOUT);
   } catch (error) {
     console.warn("Backend logout unreachable, forcing local wipe.", error);
   } finally {
