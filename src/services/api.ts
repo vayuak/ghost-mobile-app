@@ -1,9 +1,11 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
-
 // 🟢 DYNAMIC ENVIRONMENT CONFIGURATION
-const DEFAULT_URL = 'https://mode-production-6bbb.up.railway.app';
-export const BASE_URL = (process.env.EXPO_PUBLIC_API_BASE_URL || DEFAULT_URL).replace(/\/$/, '');
 
+const DEFAULT_URL = 'https://sandbag-sterling-leggings.ngrok-free.dev';
+export const BASE_URL = (process.env.EXPO_PUBLIC_API_BASE_URL || DEFAULT_URL).replace(/\/$/, '');
+if (!process.env.EXPO_PUBLIC_API_BASE_URL) {
+  throw new Error("CRITICAL: EXPO_PUBLIC_API_BASE_URL is not set in your .env file!");
+}
 // Convert base HTTP/HTTPS URL into WSS/WS for WebSockets automatically
 const getWsUrl = (baseUrl: string) => {
   const cleanUrl = baseUrl.replace(/\/$/, '');

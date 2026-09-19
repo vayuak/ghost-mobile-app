@@ -10,7 +10,7 @@
       "node": "20.19.4",
       "env": {
         "NPM_CONFIG_LEGACY_PEER_DEPS": "true",
-        "EXPO_PUBLIC_API_BASE_URL": "https://mode-production-6bbb.up.railway.app",
+        "EXPO_PUBLIC_API_BASE_URL": "https://sandbag-sterling-leggings.ngrok-free.dev",
         "EXPO_PUBLIC_SHIELD_KEY": "gsk_live_8f7b2c9a4e1d5f6e8a0b3c2d1e4f5a6b7c8d9e0f1a2b3c4d5"
       }
     }
