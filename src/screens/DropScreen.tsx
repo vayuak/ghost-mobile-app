@@ -8,7 +8,7 @@ import { Feather } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as Notifications from 'expo-notifications'; 
 import { useHighAccuracyLocation } from '../hooks/useHighAccuracyLocation';
-import { apiClient, API_ROUTES } from '../services/api'; // 🟢 IMPORTED API_ROUTES
+import { apiClient, API_ROUTES, BASE_URL } from '../services/api'; 
 import { peekAvatarUrl, preloadAvatars } from '../services/ProfileCache'; 
 
 Notifications.setNotificationHandler({
@@ -40,14 +40,14 @@ interface NearbyDrop {
   statusMessage: string;
   avatarUrl?: string | null; 
   createdAt?: string | number;
-  isSafeText?: boolean; // 🟢 AI Safety Flag (Populated from backend)
+  isSafeText?: boolean; 
 }
 
 interface DropsScreenProps {
   onUnreadCountChange?: (count: number) => void;
+  navigation?: any; 
 }
 
-// 🟢 AI Fallback "Tap to Reveal" Component
 const DropContent = ({ drop, isSelf }: { drop: NearbyDrop, isSelf: boolean }) => {
   const [isRevealed, setIsRevealed] = useState(
     isSelf || drop.isSafeText !== false
@@ -70,7 +70,7 @@ const DropContent = ({ drop, isSelf }: { drop: NearbyDrop, isSelf: boolean }) =>
   return <Text style={styles.messageText}>{drop.statusMessage}</Text>;
 };
 
-export const DropsScreen: React.FC<DropsScreenProps> = ({ onUnreadCountChange }) => {
+export const DropsScreen: React.FC<DropsScreenProps> = ({ onUnreadCountChange, navigation }) => {
   const insets = useSafeAreaInsets();
   const { coords } = useHighAccuracyLocation();
 
@@ -95,11 +95,9 @@ export const DropsScreen: React.FC<DropsScreenProps> = ({ onUnreadCountChange })
   useEffect(() => {
     let pingInterval: NodeJS.Timeout;
     if (coords && isRadarActive) {
-      // 🟢 Centralized Route
       apiClient.post(`${API_ROUTES.CAMPFIRE.PING_LOCATION}?lat=${coords.latitude}&lng=${coords.longitude}`).catch(() => {});
       pingInterval = setInterval(() => {
         if (coordsRef.current && isRadarActive) {
-          // 🟢 Centralized Route
           apiClient.post(`${API_ROUTES.CAMPFIRE.PING_LOCATION}?lat=${coordsRef.current.latitude}&lng=${coordsRef.current.longitude}`).catch(() => {});
         }
       }, 30000);
@@ -138,7 +136,6 @@ export const DropsScreen: React.FC<DropsScreenProps> = ({ onUnreadCountChange })
 
   const fetchUserProfile = async () => {
     try {
-      // 🟢 Centralized Route
       const user = await apiClient.get(API_ROUTES.AUTH.ME);
       if (user?.username && isMountedRef.current) {
         setCurrentUsername(user.username);
@@ -146,13 +143,16 @@ export const DropsScreen: React.FC<DropsScreenProps> = ({ onUnreadCountChange })
     } catch (e) { }
   };
 
-  const getSecureImageSource = (uri: string) => { return { uri }; };
+  // 🟢 SAFELY FORMATS AVATARS
+  const getSecureImageSource = (uri: string) => { 
+      const cleanUrl = uri.startsWith('http') ? uri : `${BASE_URL}${uri.startsWith('/') ? uri : `/${uri}`}`;
+      return { uri: cleanUrl }; 
+  };
 
   const scanRadar = async () => {
     if (!coordsRef.current || !isRadarActive) return;
 
     try {
-      // 🟢 Centralized Route
       const response: NearbyDrop[] = await apiClient.get(
         `${API_ROUTES.CAMPFIRE.SCAN}?lat=${coordsRef.current.latitude}&lng=${coordsRef.current.longitude}`
       );
@@ -206,7 +206,6 @@ export const DropsScreen: React.FC<DropsScreenProps> = ({ onUnreadCountChange })
     }
   };
 
-  // 🟢 OPTIMISTIC UI: Instant rendering, background saving
   const handlePostDrop = async () => {
     if (!isRadarActive || !message.trim()) return;
     if (!coordsRef.current) {
@@ -223,14 +222,13 @@ export const DropsScreen: React.FC<DropsScreenProps> = ({ onUnreadCountChange })
       statusMessage: tempMessage,
       avatarUrl: peekAvatarUrl(currentUsername), 
       createdAt: new Date().toISOString(),
-      isSafeText: true, // Default to safe immediately for optimistic UI
+      isSafeText: true, 
     };
 
     setDrops((prev) => [optimisticDrop, ...prev]);
     flatListRef.current?.scrollToOffset({ offset: 0, animated: true });
 
     try {
-      // 🟢 Centralized Route
       await apiClient.post(API_ROUTES.CAMPFIRE.DROP, {
         latitude: coordsRef.current.latitude,
         longitude: coordsRef.current.longitude,
@@ -240,7 +238,24 @@ export const DropsScreen: React.FC<DropsScreenProps> = ({ onUnreadCountChange })
     } catch (e: any) {
       setDrops((prev) => prev.filter((d) => d !== optimisticDrop));
       setMessage(tempMessage);
-      Alert.alert('AirDrop Failed', e?.response?.data?.message || 'Network disconnected. Could not post drop.', [{ text: 'OK' }]);
+
+      const errorMessage = e?.response?.data?.message || e?.message || 'Network disconnected. Could not post drop.';
+
+      if (errorMessage.toLowerCase().includes('limit')) {
+        Alert.alert(
+          'Out of AirDrops 🎈',
+          'You have used all 10 free AirDrops for today. Upgrade to Premium for unlimited drops!',
+          [
+            { text: 'Wait for reset', style: 'cancel' },
+            { 
+              text: 'Get Premium', 
+              onPress: () => navigation?.navigate('PremiumSubscription') 
+            }
+          ]
+        );
+      } else {
+        Alert.alert('AirDrop Failed', errorMessage, [{ text: 'OK' }]);
+      }
     }
   };
 
@@ -256,7 +271,6 @@ export const DropsScreen: React.FC<DropsScreenProps> = ({ onUnreadCountChange })
           style: 'destructive',
           onPress: async () => {
             try {
-              // 🟢 Centralized Dynamic Route
               await apiClient.post(API_ROUTES.CAMPFIRE.REPORT(username));
               Alert.alert('Reported', `@${username} reported.`);
               await scanRadar();
@@ -358,7 +372,6 @@ export const DropsScreen: React.FC<DropsScreenProps> = ({ onUnreadCountChange })
                         <Text style={styles.distanceMeta}>• {item.distanceInMeters}m</Text>
                       </View>
                       
-                      {/* 🟢 Implemented Tap to Reveal UI Component */}
                       <DropContent drop={item} isSelf={isSelf} />
 
                     </View>
@@ -413,7 +426,6 @@ const styles = StyleSheet.create({
   distanceMeta: { color: '#525252', fontSize: 10, fontWeight: '600', marginLeft: 6 },
   messageText: { color: '#E5E5E5', fontSize: 15, lineHeight: 20 },
   reportIcon: { marginLeft: 8, marginTop: 8, padding: 4 },
-  // 🟢 AI Warning Box Styles
   warningBox: { 
     backgroundColor: '#332701', 
     padding: 10, 

@@ -51,11 +51,17 @@ export default function ProfileScreen({ navigation, onLogoutTrigger }: any) {
     }, [])
   );
 
-  const fetchUserProfileAndLogs = async () => {
+ const fetchUserProfileAndLogs = async () => {
     try {
-      const res = await apiClient.get(API_ROUTES.PROFILE.MY_POSTS);
-      const posts = Array.isArray(res) ? res : res.content || [];
-      setUserPosts(posts);
+      // 🟢 NEW: Fetch everything dynamically based on your active username
+      const activeUser = await AsyncStorage.getItem('@active_username');
+      const response = await apiClient.get(`/api/social/user/${activeUser}/full-profile`);
+      
+      setUserPosts(response.posts || []);
+      
+      if (response.profile?.profilePictureUrl) {
+         setAvatarUri(response.profile.profilePictureUrl);
+      }
     } catch (e) {
       console.error("Failed to load personal logs", e);
     } finally {

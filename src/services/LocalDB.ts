@@ -120,10 +120,28 @@ export const getUnreadChatsCount = (activeUsername: string): number => {
 };
 
 // 🟢 ENHANCED: Deletes the chat completely and fires the event to clear UI
-export const clearLocalMessages = (roomId: string) => {
-  if (isWeb) return;
+// 🟢 WHATSAPP STYLE: clearLocalMessages now accepts 'keepInInbox'
+export const clearLocalMessages = (
+  roomId: string, 
+  keepInInbox: boolean = false, 
+  targetUser: string = '', 
+  activeUser: string = ''
+) => {
+  if (Platform.OS === 'web') return;
   initLocalDatabase();
+  
+  // 1. Wipe the history
   db.runSync(`DELETE FROM messages WHERE room_id = ?`, [roomId]);
+
+  // 2. If "Clear Chat" was pressed, insert a phantom system message to keep it in the inbox
+  if (keepInInbox && targetUser && activeUser) {
+    db.runSync(
+      `INSERT INTO messages (room_id, sender_username, target_username, content, media_type, is_read) 
+       VALUES (?, 'system', ?, '🚫 Chat cleared', 'system', 1)`,
+      [roomId, targetUser]
+    );
+  }
+
   DeviceEventEmitter.emit('db_chats_updated'); 
 };
 

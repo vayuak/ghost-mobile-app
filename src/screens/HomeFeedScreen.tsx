@@ -22,15 +22,12 @@ export default function HomeFeedScreen({ navigation }: any) {
   const [isLoading, setIsLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
   
-  // 🟢 Pagination & Refresh States
   const [page, setPage] = useState(0);
   const [isFetchingMore, setIsFetchingMore] = useState(false);
-  const [isRefreshing, setIsRefreshing] = useState(false); // 🟢 For Pull-to-Refresh
-  const [hasMore, setHasMore] = useState(true);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [hasMore, setHasMore] = useState(true); // 🟢 PREVENTS RUNAWAY REQUESTS
 
-  // 🟢 Viewability Tracker for Videos
   const [visiblePosts, setVisiblePosts] = useState<string[]>([]);
-
   const [metaMatrix, setMetaMatrix] = useState<any[]>([]);
   const [selectedCity, setSelectedCity] = useState('Global');
   const [fetchingMeta, setFetchingMeta] = useState(true);
@@ -39,7 +36,6 @@ export default function HomeFeedScreen({ navigation }: any) {
   const [citySearchQuery, setCitySearchQuery] = useState('');
   const [activeUser, setActiveUser] = useState<string>('');
 
-  // 🟢 Viewability Config (A post is "visible" if 50% of it is on screen)
   const viewabilityConfig = useRef({ itemVisiblePercentThreshold: 50 }).current;
   const onViewableItemsChanged = useRef(({ viewableItems }: any) => {
     setVisiblePosts(viewableItems.map((v: any) => String(v.item.id)));
@@ -64,23 +60,33 @@ export default function HomeFeedScreen({ navigation }: any) {
   }, []);
 
   const executeQueryDiscovery = async (targetQuery: string, targetCity: string, pageNum: number = 0, append = false) => {
+    // 🟢 HARD STOP: Block pagination requests if we already know no more items exist
+    if (append && !hasMore) return;
+
     if (!append && !isRefreshing) setIsLoading(true);
+    
     try {
       if (!targetQuery.trim()) {
-        const res = await apiClient.post(API_ROUTES.SEARCH.FEED(targetCity, pageNum, 20));
+        // 🟢 FIX 405: Changed from apiClient.post to apiClient.get
+        const res = await apiClient.get(API_ROUTES.SEARCH.FEED(targetCity, pageNum, 20));
         const data = Array.isArray(res) ? res : res.content || [];
         setSearchType('POSTS');
         
-        if (data.length < 20) setHasMore(false);
+        // 🟢 LOCK PAGINATION: If fewer than 20 posts return, lock future calls
+        if (!data || data.length < 20) {
+          setHasMore(false);
+        }
+
         setSearchResults(append ? [...searchResults, ...data] : data);
       } else {
         const res = await apiClient.get(API_ROUTES.SEARCH.DISCOVER(targetQuery.trim()));
         setSearchType(res.type || 'POSTS');
         setSearchResults(res.results || res || []);
-        setHasMore(false); 
+        setHasMore(false); // Search results do not paginate
       }
     } catch (err) { 
       if (!append) setSearchResults([]); 
+      setHasMore(false); // Lock on error to prevent request loops
     } finally { 
       setIsLoading(false); 
       setIsFetchingMore(false);
@@ -90,28 +96,28 @@ export default function HomeFeedScreen({ navigation }: any) {
 
   useEffect(() => {
     setPage(0);
-    setHasMore(true);
+    setHasMore(true); // Reset pagination lock when switching cities or searching
     const delayDebounce = setTimeout(() => executeQueryDiscovery(searchQuery, selectedCity, 0, false), 400);
     return () => clearTimeout(delayDebounce);
   }, [searchQuery, selectedCity]);
 
-  // 🟢 Handle Pull-to-Refresh
   const handleRefresh = () => {
     setIsRefreshing(true);
     setPage(0);
-    setHasMore(true);
+    setHasMore(true); // Reset pagination lock on manual pull-to-refresh
     executeQueryDiscovery(searchQuery, selectedCity, 0, false);
   };
 
   const handleLoadMore = () => {
+    // 🟢 PREVENT SPAM: Never trigger if locked, loading, refreshing, or searching
     if (!hasMore || isFetchingMore || isLoading || searchQuery.trim()) return;
+    
     setIsFetchingMore(true);
     const nextPage = page + 1;
     setPage(nextPage);
     executeQueryDiscovery(searchQuery, selectedCity, nextPage, true);
   };
 
-  // 🟢 Navigate to Public Profile instead of Chat
   const handleUserTap = (username: string) => {
     navigation.navigate('PublicProfile', { targetUser: username });
   };
@@ -199,12 +205,9 @@ export default function HomeFeedScreen({ navigation }: any) {
           data={searchResults}
           keyExtractor={(item, index) => item.id ? item.id.toString() : index.toString()}
           contentContainerStyle={{ paddingBottom: 20 }}
-          // 🟢 Pull to Refresh
           refreshControl={<RefreshControl refreshing={isRefreshing} onRefresh={handleRefresh} tintColor="#FFFFFF" />}
-          // 🟢 Infinite Scroll
           onEndReached={handleLoadMore} 
-          onEndReachedThreshold={0.5} 
-          // 🟢 Video Viewability Tracking
+          onEndReachedThreshold={0.1} // Lowered trigger distance to prevent false-positives on short screens
           onViewableItemsChanged={onViewableItemsChanged}
           viewabilityConfig={viewabilityConfig}
           ListFooterComponent={isFetchingMore ? <ActivityIndicator size="small" color="#666" style={{ margin: 20 }} /> : null}
@@ -230,8 +233,8 @@ export default function HomeFeedScreen({ navigation }: any) {
               <PostCard 
                 post={item} 
                 currentUsername={activeUser} 
-                isVisible={visiblePosts.includes(String(item.id))} // 🟢 Pass visibility down
-                onUserTap={() => handleUserTap(item.username)} // 🟢 Handle avatar tap
+                isVisible={visiblePosts.includes(String(item.id))}
+                onUserTap={() => handleUserTap(item.username)}
               />
             );
           }}

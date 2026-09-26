@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { Text, View, TextInput, TouchableOpacity, ActivityIndicator, KeyboardAvoidingView, Platform, ScrollView, StyleSheet } from 'react-native';
+import { Text, View, TextInput, TouchableOpacity, ActivityIndicator, KeyboardAvoidingView, Platform, ScrollView, StyleSheet, BackHandler } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import * as SecureStore from 'expo-secure-store'; // 🟢 ADDED ENCRYPTED STORAGE
+import * as SecureStore from 'expo-secure-store'; 
 import { Feather } from '@expo/vector-icons';
 import { apiClient, API_ROUTES } from '../services/api';
 
@@ -18,6 +18,25 @@ export default function AuthScreen({ onAuthSuccess }: { onAuthSuccess: () => voi
   
   const [uiMessage, setUiMessage] = useState<{ text: string, type: 'error' | 'success' } | null>(null);
   const [usernameStatus, setUsernameStatus] = useState<'AVAILABLE' | 'TAKEN' | null>(null);
+
+  // 🟢 FIXED: Hardware Back Button Handling
+  useEffect(() => {
+    const backAction = () => {
+      if (workflowStep === 2) {
+        setWorkflowStep(1);
+        return true; 
+      }
+      if (currentMode !== 'LOGIN') {
+        setCurrentMode('LOGIN');
+        setUiMessage(null);
+        return true;
+      }
+      return false; 
+    };
+
+    const backHandler = BackHandler.addEventListener('hardwareBackPress', backAction);
+    return () => backHandler.remove();
+  }, [currentMode, workflowStep]);
 
   useEffect(() => {
     if (currentMode !== 'REGISTER' || username.length < 3) {
@@ -45,28 +64,33 @@ export default function AuthScreen({ onAuthSuccess }: { onAuthSuccess: () => voi
     return pass.length >= 8 && /[A-Z]/.test(pass) && /[0-9]/.test(pass) && /[^A-Za-z0-9]/.test(pass);
   };
 
-  const sanitizeError = (err: any) => {
-    if (err?.response?.data && typeof err.response.data === 'object' && !err.response.data.error) {
-       const firstErrorKey = Object.keys(err.response.data)[0];
-       return err.response.data[firstErrorKey] || 'Invalid input provided.';
-    }
+const sanitizeError = (err: any) => {
+  if (err?.response?.data && typeof err.response.data === 'object' && !err.response.data.error) {
+     const firstErrorKey = Object.keys(err.response.data)[0];
+     return err.response.data[firstErrorKey] || 'Invalid input provided.';
+  }
 
-    const msg = err?.message?.toLowerCase() || err?.response?.data?.error?.toLowerCase() || '';
-    
-    if (msg.includes('incorrect email') || msg.includes('invalid identity') || msg.includes('bad credentials')) return 'Incorrect email or password. Please try again or register.';
-    if (msg.includes('contact method') || msg.includes('platform footprint')) return 'This email is already registered. Please return to login.';
-    if (msg.includes('identity signature') || msg.includes('infrastructure')) return 'This username is already taken. Please choose another.';
-    if (msg.includes('processing active') || msg.includes('handshake protocol')) return 'A verification code was recently sent to this email. Please wait 10 minutes before trying again.';
-    if (msg.includes('staging window lost')) return 'Your verification session expired. Please register again.';
-    if (msg.includes('too many invalid attempts')) return 'Too many invalid attempts. Please request a new code.';
-    if (msg.includes('no active registration handshake')) return 'Verification failed. The code may have expired, or you need to restart the app.';
-    if (msg.includes('not found') || msg.includes('404')) return 'We could not find an account with that email.';
-    if (msg.includes('network') || msg.includes('timeout')) return 'Network error. Please check your internet connection.';
-    if (msg.includes('deliver') || msg.includes('smtp') || msg.includes('connection refused')) return 'We could not deliver the email. Please check if the address is typed correctly.';
-    if (msg.includes('500') || msg.includes('internal')) return 'Something went wrong on our end. Please try again later.';
-    
-    return err?.response?.data?.error || err?.message || 'An unexpected error occurred. Please try again.';
-  };
+  const msg = err?.message?.toLowerCase() || err?.response?.data?.error?.toLowerCase() || '';
+  
+  // 🟢 NEW: Explicitly handle account suspension messages
+  if (msg.includes('suspended') || msg.includes('blocked') || msg.includes('banned') || msg.includes('disabled')) {
+    return 'Your account has been suspended due to multiple community reports. Please contact support at badger.developer.001@gmail.com for assistance.';
+  }
+
+  if (msg.includes('incorrect email') || msg.includes('invalid identity') || msg.includes('bad credentials')) return 'Incorrect email or password. Please try again or register.';
+  if (msg.includes('contact method') || msg.includes('platform footprint')) return 'This email is already registered. Please return to login.';
+  if (msg.includes('identity signature') || msg.includes('infrastructure')) return 'This username is already taken. Please choose another.';
+  if (msg.includes('processing active') || msg.includes('handshake protocol')) return 'A verification code was recently sent to this email. Please wait 10 minutes before trying again.';
+  if (msg.includes('staging window lost')) return 'Your verification session expired. Please register again.';
+  if (msg.includes('too many invalid attempts')) return 'Too many invalid attempts. Please request a new code.';
+  if (msg.includes('no active registration handshake')) return 'Verification failed. The code may have expired, or you need to restart the app.';
+  if (msg.includes('not found') || msg.includes('404')) return 'We could not find an account with that email.';
+  if (msg.includes('network') || msg.includes('timeout')) return 'Network error. Please check your internet connection.';
+  if (msg.includes('deliver') || msg.includes('smtp') || msg.includes('connection refused')) return 'We could not deliver the email. Please check if the address is typed correctly.';
+  if (msg.includes('500') || msg.includes('internal')) return 'Something went wrong on our end. Please try again later.';
+  
+  return err?.response?.data?.error || err?.message || 'An unexpected error occurred. Please try again.';
+};
 
   const validateInput = () => {
     if (currentMode === 'REGISTER' || currentMode === 'FORGOT_PASSWORD') {
@@ -88,11 +112,7 @@ export default function AuthScreen({ onAuthSuccess }: { onAuthSuccess: () => voi
     return true;
   };
 
-  // 🟢 CRYPTOGRAPHY: Generates Device Keypair for E2EE
   const generateDeviceKeyPair = async () => {
-    // Note: For a true Signal clone, you will later replace this mock string 
-    // with an actual Ed25519 or RSA library like 'tweetnacl' or 'react-native-rsa-native'.
-    // This allows your production pipeline to function perfectly right now.
     const pseudoPublicKey = `pub_key_${Date.now()}_${Math.random().toString(36).substring(2)}`;
     const pseudoPrivateKey = `priv_key_${Date.now()}_${Math.random().toString(36).substring(2)}`;
     return { publicKey: pseudoPublicKey, privateKey: pseudoPrivateKey };
@@ -114,7 +134,6 @@ export default function AuthScreen({ onAuthSuccess }: { onAuthSuccess: () => voi
           const trueUsername = meRes.username.trim().toLowerCase();
           await AsyncStorage.setItem('@active_username', trueUsername);
         } catch (meError) {
-          console.error("Failed to fetch /me during login, using fallback", meError);
           const fallback = contactId.includes('@') ? contactId.split('@')[0] : contactId;
           await AsyncStorage.setItem('@active_username', fallback.toLowerCase().trim());
         }
@@ -133,18 +152,14 @@ export default function AuthScreen({ onAuthSuccess }: { onAuthSuccess: () => voi
     
     setLoading(true);
     try {
-      // 1. Generate keys locally
       const { publicKey, privateKey } = await generateDeviceKeyPair();
-
-      // 2. Lock the private key in the device hardware safely
       await SecureStore.setItemAsync('ghost_private_key', privateKey);
 
-      // 3. Send payload INCLUDING the public key to Spring Boot
       await apiClient.post(API_ROUTES.AUTH.REGISTER, { 
         username: username.toLowerCase().trim(), 
         password, 
         contactIdentifier: contactId.trim(),
-        publicKey: publicKey // 🟢 Payload requirement met!
+        publicKey: publicKey 
       });
       
       setUiMessage({ text: `Verification code sent to ${contactId.trim()}`, type: 'success' }); 
@@ -213,7 +228,7 @@ export default function AuthScreen({ onAuthSuccess }: { onAuthSuccess: () => voi
     <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={{ flex: 1, backgroundColor: '#000000' }}>
       <ScrollView contentContainerStyle={styles.container}>
         <Text style={styles.brandTitle}>Caravel</Text>
-        <Text style={styles.brandSubtitle}>Explore together. Travel safely. badger.developer.001@gmail.com</Text>
+        <Text style={styles.brandSubtitle}>Explore together. Travel safely.</Text>
         <View style={styles.card}>
           <Text style={styles.modeText}>[{currentMode} PROTOCOL]</Text>
 

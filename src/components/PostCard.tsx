@@ -10,8 +10,8 @@ interface PostCardProps {
   post: any;
   currentUsername?: string;
   onDelete?: (postId: any) => void;
-  isVisible?: boolean; // 🟢 Added this
-  onUserTap?: () => void; // 🟢 Added this
+  isVisible?: boolean; 
+  onUserTap?: () => void; 
 }
 
 const parseNumeric = (val: any) => {
@@ -69,7 +69,6 @@ export default function PostCard({ post, currentUsername: propUsername, onDelete
     if (playerInstance) playerInstance.loop = true; 
   });
 
-  // 🟢 Start/Stop video based on scroll visibility
   useEffect(() => {
     if (isVideo && player) {
       if (isVisible) player.play();
@@ -95,11 +94,25 @@ export default function PostCard({ post, currentUsername: propUsername, onDelete
     } finally { setIsVoting(false); }
   };
 
+  // 🟢 UPDATED: Native Share Link generation using your HTTPS domain
   const handleShare = async () => {
     try {
-      const shareUrl = `ghostshield://post/${post.id}`;
-      await Share.share({ message: `Check out this post by @${displayUsername} on GhostShield!\n\n"${post.title || post.content}"\n\nTap to view: ${shareUrl}` });
-    } catch (error) { console.warn("Share logic failed"); }
+      const appDomain = process.env.EXPO_PUBLIC_API_BASE_URL || 'https://sandbag-sterling-leggings.ngrok-free.dev';
+      const shareUrl = `${appDomain}/post/${post.id}`;
+      
+      const snippet = post.title || post.content || '';
+      
+      await Share.share({ 
+        message: `Check out this post by @${displayUsername} on GhostShield!\n\n"${snippet}"\n\nTap to view: ${shareUrl}`,
+        url: shareUrl, // iOS uses this field explicitly to make the link clickable in native popups
+        title: post.title || 'GhostShield Post'
+      });
+
+      // Optionally increment share count on backend
+      apiClient.post(`/api/social/post/${post.id}/share`).catch(() => {});
+    } catch (error) { 
+      console.warn("Share logic failed", error); 
+    }
   };
 
   const handleDeleteTrigger = () => {
@@ -124,7 +137,6 @@ export default function PostCard({ post, currentUsername: propUsername, onDelete
   return (
     <View style={styles.card}>
       <View style={[styles.cardHeader, { zIndex: 10 }]}>
-        {/* 🟢 Clickable Profile Header */}
         <TouchableOpacity style={styles.authorRow} onPress={onUserTap} disabled={!onUserTap}>
           <View style={styles.smallAvatar}>{renderAvatar(displayAvatar, displayUsername)}</View>
           <Text style={styles.authorName}>@{displayUsername}</Text>

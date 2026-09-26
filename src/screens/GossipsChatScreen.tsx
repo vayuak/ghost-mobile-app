@@ -7,8 +7,8 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Feather } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker'; 
-import { apiClient, API_ROUTES } from '../services/api';
-import { getAvatarUrl } from '../services/ProfileCache';
+import { apiClient, API_ROUTES, BASE_URL } from '../services/api';
+import { getAvatarUrl, peekAvatarUrl } from '../services/ProfileCache'; 
 import { useNetwork } from '../services/GlobalNetworkManager'; 
 import {
   ensureKeysPublished, encryptForPeer, getPeerPublicKey,
@@ -18,7 +18,6 @@ import {
   initLocalDatabase, saveLocalMessage, getLocalMessages, markRoomAsRead, clearLocalMessages
 } from '../services/LocalDB';
 
-// 🟢 NEW: Global tracker so the Network Manager knows NOT to send push notifications for this user
 export let currentActiveChat = '';
 
 interface MessageItem {
@@ -27,7 +26,7 @@ interface MessageItem {
   content: string;
   timestamp: string;
   undecryptable?: boolean;
-  status?: 'sending' | 'failed' | 'sent'; // 🟢 Added status for optimistic UI
+  status?: 'sending' | 'failed' | 'sent'; 
 }
 
 type CryptoState = 'checking' | 'ready' | 'peer-has-no-key' | 'key-changed' | 'error';
@@ -73,7 +72,7 @@ export default function GossipsChatScreen({ route, navigation }: any) {
 
   useEffect(() => {
     let isMounted = true;
-    currentActiveChat = targetUser; // 🟢 Mark this user as actively being chatted with
+    currentActiveChat = targetUser; 
 
     const boot = async () => {
       try {
@@ -95,7 +94,14 @@ export default function GossipsChatScreen({ route, navigation }: any) {
         roomIdRef.current = roomId;
         
         loadLocalHistory(roomId);
-        getAvatarUrl(targetUser).then((url) => { if (isMounted) setTargetAvatar(url); });
+
+        getAvatarUrl(targetUser).then((url) => { 
+          if (isMounted && url) {
+              // 🟢 NORMALIZED AVATAR URL
+              const cleanUrl = url.startsWith('http') ? url : `${BASE_URL}${url.startsWith('/') ? url : `/${url}`}`;
+              setTargetAvatar(cleanUrl); 
+          }
+        });
 
         try { await ensureKeysPublished(); } catch (e: any) { }
 
@@ -117,6 +123,15 @@ export default function GossipsChatScreen({ route, navigation }: any) {
 
     boot();
 
+    const unsubAvatar = DeviceEventEmitter.addListener('avatar_cache_updated', (updatedUser) => {
+        if (updatedUser === targetUser && isMounted) {
+            const freshUrl = peekAvatarUrl(targetUser);
+            if (freshUrl) {
+                setTargetAvatar(freshUrl.startsWith('http') ? freshUrl : `${BASE_URL}${freshUrl.startsWith('/') ? freshUrl : `/${freshUrl}`}`);
+            }
+        }
+    });
+
     const dbSub = DeviceEventEmitter.addListener('db_chats_updated', () => {
       if (roomIdRef.current) {
         loadLocalHistory(roomIdRef.current);
@@ -126,8 +141,9 @@ export default function GossipsChatScreen({ route, navigation }: any) {
 
     return () => {
       isMounted = false;
-      currentActiveChat = ''; // 🟢 Clear active chat on unmount
+      currentActiveChat = ''; 
       dbSub.remove();
+      unsubAvatar.remove();
     };
   }, [targetUser]);
 
@@ -136,12 +152,10 @@ export default function GossipsChatScreen({ route, navigation }: any) {
       markRoomAsRead(roomId); 
       const history = getLocalMessages(roomId);
       
-      // Preserve optimistic messages that haven't hit DB yet
       setMessages((current) => {
         const dbMsgs = Array.isArray(history) ? (history as MessageItem[]) : [];
         const pendingMsgs = current.filter(m => m.status === 'sending' || m.status === 'failed');
         
-        // Remove pending messages if they now exist in DB
         const pendingNotSaved = pendingMsgs.filter(p => !dbMsgs.some(d => d.msgId === p.msgId));
         return [...dbMsgs, ...pendingNotSaved];
       });
@@ -152,7 +166,6 @@ export default function GossipsChatScreen({ route, navigation }: any) {
     }
   };
 
-  // 🟢 OPTIMISTIC BACKGROUND SENDER
   const processAndSend = async (plainTextPayload: string, clientMsgId: string, sentAt: string) => {
     const roomId = roomIdRef.current;
     
@@ -171,7 +184,6 @@ export default function GossipsChatScreen({ route, navigation }: any) {
         iv: envelope.iv,
       });
 
-      // Save to SQLite (Triggers reload automatically)
       saveLocalMessage(roomId, activeUserRef.current, plainTextPayload, null, null, targetUser, clientMsgId, sentAt);
       markRoomAsRead(roomId);
       
@@ -179,13 +191,11 @@ export default function GossipsChatScreen({ route, navigation }: any) {
       if (e instanceof KeyChangedError) setCryptoState('key-changed');
       else if (e instanceof NoKeyError) setCryptoState('peer-has-no-key');
       
-      // Mark as failed in UI if cryptography fails
       setMessages((prev) => prev.map(m => m.msgId === clientMsgId ? { ...m, status: 'failed' } : m));
       Alert.alert('Could not send', e?.message || 'Encryption failed.');
     }
   };
 
-  // 🟢 FAST OPTIMISTIC UI: No loading spinners, immediate render
   const handleSend = async () => {
     const text = chatInput.trim();
     if (!text) return;
@@ -195,12 +205,11 @@ export default function GossipsChatScreen({ route, navigation }: any) {
       return;
     }
 
-    setChatInput(''); // 1. Clear input instantly
+    setChatInput(''); 
     
     const clientMsgId = `${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
     const sentAt = new Date().toISOString();
 
-    // 2. Create Optimistic Message
     const optimisticMsg: MessageItem = {
       msgId: clientMsgId,
       sender_username: activeUserRef.current,
@@ -209,11 +218,9 @@ export default function GossipsChatScreen({ route, navigation }: any) {
       status: 'sending'
     };
 
-    // 3. Inject to UI Instantly
     setMessages((prev) => [...prev, optimisticMsg]);
     scrollToEnd(true);
 
-    // 4. Encrypt and Send in background
     processAndSend(text, clientMsgId, sentAt);
   };
 
@@ -237,7 +244,6 @@ export default function GossipsChatScreen({ route, navigation }: any) {
         const clientMsgId = `${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
         const sentAt = new Date().toISOString();
         
-        // Optimistic UI for Image
         setMessages((prev) => [...prev, { msgId: clientMsgId, sender_username: activeUserRef.current, content: imagePayload, timestamp: sentAt, status: 'sending' }]);
         scrollToEnd(true);
 
@@ -256,71 +262,66 @@ export default function GossipsChatScreen({ route, navigation }: any) {
   const showOptionsMenu = () => {
     Alert.alert(
       `Options for @${targetUser}`,
-      'Manage conversation privacy:',
+      'Select an action:',
       [
         { text: 'Cancel', style: 'cancel' },
         { 
           text: 'Report User', 
           onPress: () => {
-            Alert.alert(
-              'Report User',
-              `Report @${targetUser} to moderators?`,
-              [
-                { text: 'Cancel', style: 'cancel' },
-                {
-                  text: 'Report',
-                  style: 'destructive',
-                  onPress: async () => {
-                    try {
-                      // 🟢 Hits the same endpoint as AirDrops
-                      await apiClient.post(API_ROUTES.CAMPFIRE.REPORT(targetUser));
-                      Alert.alert('Reported', `@${targetUser} has been reported to moderation.`);
-                    } catch (e: any) {
-                      Alert.alert('Error', e?.message || 'Could not report user.');
-                    }
+            Alert.alert('Report User', `Report @${targetUser} to moderators?`, [
+              { text: 'Cancel', style: 'cancel' },
+              {
+                text: 'Report', style: 'destructive', onPress: async () => {
+                  try {
+                    await apiClient.post(API_ROUTES.CAMPFIRE.REPORT(targetUser));
+                    Alert.alert('Reported', `@${targetUser} has been reported.`);
+                  } catch (e: any) {
+                    Alert.alert('Error', e?.message || 'Could not report user.');
                   }
                 }
-              ]
-            );
-          } 
-        },
-        { 
-          text: 'Clear Chat History', 
-          style: 'destructive',
-          onPress: () => {
-            Alert.alert('Delete History', 'This will permanently remove all messages from your device.', [
-              { text: 'Cancel', style: 'cancel' },
-              { text: 'Clear', style: 'destructive', onPress: () => {
-                if (roomIdRef.current) {
-                  clearLocalMessages(roomIdRef.current);
-                  navigation.goBack(); // Go back to inbox since chat is empty
-                }
-              }}
+              }
             ]);
           } 
         },
         { 
-          text: 'Block & Delete Chat', 
-          style: 'destructive',
+          text: 'Manage Chat...', 
           onPress: () => {
-            Alert.alert('Block User', `You will no longer receive messages from @${targetUser}, and your chat history will be wiped.`, [
+            Alert.alert('Manage Chat', 'Block or clear messages:', [
               { text: 'Cancel', style: 'cancel' },
-              { text: 'Block', style: 'destructive', onPress: () => {
-                // 🟢 1. Block locally in SQLite
-                import('../services/LocalDB').then(({ blockLocalUser }) => {
-                   blockLocalUser(targetUser);
-                });
-                // 🟢 2. Vaporize history
-                if (roomIdRef.current) clearLocalMessages(roomIdRef.current);
-                // 🟢 3. Leave the room
-                navigation.goBack();
-              }}
+              { 
+                text: 'Clear Chat', 
+                onPress: () => {
+                  Alert.alert('Clear Chat', 'Clear messages but keep thread in inbox?', [
+                    { text: 'Cancel', style: 'cancel' },
+                    { text: 'Clear', style: 'destructive', onPress: () => {
+                        clearLocalMessages(roomIdRef.current, true, targetUser, activeUserRef.current);
+                    }}
+                  ]);
+                } 
+              },
+              { 
+                text: 'Block User', 
+                style: 'destructive',
+                onPress: () => {
+                  Alert.alert('Block User', `Block @${targetUser} permanently?`, [
+                    { text: 'Cancel', style: 'cancel' },
+                    { text: 'Block', style: 'destructive', onPress: () => {
+                      import('../services/LocalDB').then(({ blockLocalUser }) => {
+                         blockLocalUser(targetUser);
+                      });
+                      clearLocalMessages(roomIdRef.current, false); // Nuke chat entirely if blocked
+                      navigation.goBack();
+                    }}
+                  ]);
+                } 
+              }
             ]);
           } 
-        },
+        }
       ]
     );
   };
+  
   const formatTime = (iso: string) => {
     const d = new Date(iso);
     if (isNaN(d.getTime())) return '';
@@ -374,6 +375,16 @@ export default function GossipsChatScreen({ route, navigation }: any) {
           </View>
         ) : (
           messages.map((item, i) => {
+            if (item.sender_username === 'system') {
+              return (
+                <View key={item.msgId || i.toString()} style={styles.systemBubbleWrapper}>
+                  <View style={styles.systemBubble}>
+                    <Text style={styles.systemText}>{item.content}</Text>
+                  </View>
+                </View>
+              );
+            }
+
             const isMe = (item.sender_username || '').trim().toLowerCase() === activeUser;
             const isImage = item.content?.startsWith('DATA_IMAGE::');
             const displayContent = isImage ? item.content.replace('DATA_IMAGE::', '') : item.content;
@@ -389,7 +400,6 @@ export default function GossipsChatScreen({ route, navigation }: any) {
                   
                   <View style={{ flexDirection: 'row', justifyContent: 'flex-end', alignItems: 'center', marginTop: 3 }}>
                     <Text style={styles.time}>{formatTime(item.timestamp)}</Text>
-                    {/* 🟢 Optimistic Status Indicators */}
                     {isMe && item.status === 'sending' && <Feather name="clock" size={10} color="rgba(255,255,255,0.4)" style={{ marginLeft: 4 }} />}
                     {isMe && item.status === 'failed' && <Feather name="alert-circle" size={10} color="#FF3B30" style={{ marginLeft: 4 }} />}
                     {isMe && !item.status && <Feather name="check" size={10} color="rgba(255,255,255,0.4)" style={{ marginLeft: 4 }} />}
@@ -425,13 +435,13 @@ export default function GossipsChatScreen({ route, navigation }: any) {
     <View style={[styles.container, { paddingTop: insets.top }]}>
       <View style={styles.header}>
         <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1 }}>
-          <TouchableOpacity style={styles.backBtn} onPress={() => (navigation.canGoBack() ? navigation.goBack() : navigation.navigate('MainTabs'))} hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}>
+          <TouchableOpacity style={styles.backBtn} onPress={() => navigation.goBack()} hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}>
             <Feather name="arrow-left" size={24} color="#FFFFFF" />
           </TouchableOpacity>
           <View style={styles.identity}>
-            <View style={styles.avatar}>
+            <TouchableOpacity style={styles.avatar} onPress={() => navigation.navigate('PublicProfile', { targetUser })}>
               {targetAvatar ? <Image source={{ uri: targetAvatar }} style={styles.avatarImg} /> : <Text style={styles.avatarLetter}>{targetUser ? targetUser[0]?.toUpperCase() : '?'}</Text>}
-            </View>
+            </TouchableOpacity>
             <View style={{ flex: 1 }}>
               <Text style={styles.peerName} numberOfLines={1}>@{targetUser || 'unknown'}</Text>
             </View>
@@ -501,4 +511,7 @@ const styles = StyleSheet.create({
   empty: { alignItems: 'center', marginTop: 60, paddingHorizontal: 40 },
   emptyText: { color: '#FFFFFF', fontSize: 15, fontWeight: '800', marginTop: 14 },
   emptySub: { color: '#666666', fontSize: 12.5, textAlign: 'center', marginTop: 6, lineHeight: 18 },
+  systemBubbleWrapper: { alignItems: 'center', marginVertical: 12 }, 
+  systemBubble: { backgroundColor: '#1A1A1A', paddingHorizontal: 12, paddingVertical: 6, borderRadius: 12, borderWidth: 1, borderColor: '#262626' },
+  systemText: { color: '#8E95A5', fontSize: 11, fontWeight: '600', fontStyle: 'italic' },
 });

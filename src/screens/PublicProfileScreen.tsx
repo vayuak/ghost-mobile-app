@@ -3,7 +3,7 @@ import { StyleSheet, Text, View, TouchableOpacity, FlatList, Image, ActivityIndi
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Feather } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { apiClient, BASE_URL, API_ROUTES } from '../services/api';
+import { apiClient, BASE_URL } from '../services/api';
 import PostCard from '../components/PostCard';
 
 export default function PublicProfileScreen({ route, navigation }: any) {
@@ -14,24 +14,32 @@ export default function PublicProfileScreen({ route, navigation }: any) {
   const [authToken, setAuthToken] = useState<string | null>(null);
   const [visiblePosts, setVisiblePosts] = useState<string[]>([]);
   
+  // 🟢 Hides message button on own profile
+  const [activeUser, setActiveUser] = useState('');
+
   const viewabilityConfig = useRef({ itemVisiblePercentThreshold: 50 }).current;
   const onViewableItemsChanged = useRef(({ viewableItems }: any) => {
     setVisiblePosts(viewableItems.map((v: any) => String(v.item.id)));
   }).current;
 
   useEffect(() => {
+    AsyncStorage.getItem('@active_username').then(user => {
+      if (user) setActiveUser(user.toLowerCase());
+    });
+  }, []);
+
+useEffect(() => {
     const fetchData = async () => {
       const token = await AsyncStorage.getItem('@ghost_token');
       setAuthToken(token);
 
       try {
-        // Fetch User Profile details
-        const profile = await apiClient.get(API_ROUTES.SOCIAL.USER_PROFILE(targetUser));
-        setUserProfile(profile);
-
-        // Fetch User's Posts
-        const postsRes = await apiClient.get(API_ROUTES.PROFILE.USER_POSTS(targetUser));
-        setUserPosts(Array.isArray(postsRes) ? postsRes : postsRes.content || []);
+        // 🟢 Strip '@' symbol and spaces to prevent URL path mismatch
+        const cleanHandle = targetUser.replace(/^@/, '').trim().toLowerCase();
+        const response = await apiClient.get(`/api/social/user/${cleanHandle}/full-profile`);
+        
+        setUserProfile(response.profile);
+        setUserPosts(response.posts || []);
       } catch (error) {
         console.warn("Failed to load public profile:", error);
       } finally {
@@ -40,7 +48,6 @@ export default function PublicProfileScreen({ route, navigation }: any) {
     };
     fetchData();
   }, [targetUser]);
-
   const getFullAvatarUrl = (uri: string | null) => {
     if (!uri) return null;
     if (uri.startsWith('http')) return uri;
@@ -48,6 +55,7 @@ export default function PublicProfileScreen({ route, navigation }: any) {
   };
 
   const fullAvatarUrl = getFullAvatarUrl(userProfile?.avatarUrl || userProfile?.profilePictureUrl);
+  const isSelf = targetUser.toLowerCase() === activeUser;
 
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
@@ -80,11 +88,13 @@ export default function PublicProfileScreen({ route, navigation }: any) {
 
               <Text style={styles.usernameText}>@{targetUser}</Text>
 
-              {/* 🟢 The Message Button */}
-              <TouchableOpacity style={styles.messageBtn} onPress={() => navigation.navigate('GossipsChat', { targetUser })}>
-                <Feather name="message-circle" size={16} color="#000" style={{ marginRight: 8 }} />
-                <Text style={styles.messageBtnText}>Message</Text>
-              </TouchableOpacity>
+              {/* 🟢 Hides the Message button if this is the active user */}
+              {!isSelf && (
+                <TouchableOpacity style={styles.messageBtn} onPress={() => navigation.navigate('GossipsChat', { targetUser })}>
+                  <Feather name="message-circle" size={16} color="#000" style={{ marginRight: 8 }} />
+                  <Text style={styles.messageBtnText}>Message</Text>
+                </TouchableOpacity>
+              )}
 
               <View style={styles.sectionHeader}>
                 <Text style={styles.sectionTitle}>POSTS</Text>

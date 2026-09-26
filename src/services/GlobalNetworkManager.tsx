@@ -7,13 +7,14 @@ import { P2P_WS_URL, apiClient } from './api';
 import { saveLocalMessage, hasLocalMessage, isUserBlocked } from './LocalDB';
 import { decryptFromPeer } from './CryptoVault';
 import { currentActiveChat } from '../screens/GossipsChatScreen';
+import { peekAvatarUrl, getAvatarUrl } from './ProfileCache'; 
 
 Notifications.setNotificationHandler({
   handleNotification: async () => ({
     shouldPlaySound: true,
     shouldSetBadge: true,
-    shouldShowBanner: true, // 🟢 Replaces shouldShowAlert
-    shouldShowList: true,   // 🟢 Required by new Expo types
+    shouldShowBanner: true, 
+    shouldShowList: true,   
   }),
 });
 
@@ -37,13 +38,11 @@ export const GlobalNetworkManager: React.FC<{ children: React.ReactNode }> = ({ 
   useEffect(() => {
     let isActive = true;
 
-    // 🟢 NEW: Added isBulkSync parameter
     const processIncomingPayload = async (payload: any, me: string, isBulkSync: boolean = false) => {
       const sender = (payload.senderUsername || '').trim().toLowerCase();
       if (sender === me) return; 
       if (payload.msgId && hasLocalMessage(payload.msgId)) return;
-
-      if (isUserBlocked(sender)) return; // Ghost Ban Check
+      if (isUserBlocked(sender)) return; 
 
       try {
         const plaintext = await decryptFromPeer(
@@ -60,10 +59,13 @@ export const GlobalNetworkManager: React.FC<{ children: React.ReactNode }> = ({ 
           const roomId = payload.roomId || [me, sender].sort().join('_');
           const originTs = payload.sentAt || new Date().toISOString();
           
-          // 🟢 Pass isBulkSync to prevent UI lag
           saveLocalMessage(roomId, sender, plaintext, null, null, me, payload.msgId, originTs, isBulkSync);
           
-          // 🟢 Only show drop-down banners for LIVE messages, not old bulk messages
+          // 🟢 SILENT FETCH: If the avatar is missing locally, grab it now!
+          if (!peekAvatarUrl(sender)) {
+             getAvatarUrl(sender).catch(() => {});
+          }
+
           if (!isBulkSync && Platform.OS !== 'web' && sender !== currentActiveChat) {
             const isImage = plaintext.startsWith('DATA_IMAGE::');
             await Notifications.scheduleNotificationAsync({
@@ -86,15 +88,12 @@ export const GlobalNetworkManager: React.FC<{ children: React.ReactNode }> = ({ 
           const processedIds: string[] = [];
           
           for (const msg of missedMessages) {
-            // 🟢 Pass TRUE to silently process without spamming notifications
             await processIncomingPayload(msg, me, true);
             if (msg.msgId) processedIds.push(msg.msgId);
           }
 
           if (processedIds.length > 0) {
             await apiClient.post('/v1/p2p/sync/ack', processedIds);
-            
-            // 🟢 ONE single update event for the whole batch
             DeviceEventEmitter.emit('db_chats_updated');
           }
         }
@@ -117,7 +116,6 @@ export const GlobalNetworkManager: React.FC<{ children: React.ReactNode }> = ({ 
         
         onConnect: () => {
           client.subscribe(`/topic/shadow-user-${me}`, async (frame) => {
-            // 🟢 Live messages pass FALSE (default) so they trigger notifications normally
             try { await processIncomingPayload(JSON.parse(frame.body), me); } catch (e) { }
           });
         }

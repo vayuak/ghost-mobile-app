@@ -1,4 +1,5 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { DeviceEventEmitter } from 'react-native';
 import { apiClient, BASE_URL } from './api';
 
 const MEM_TTL_MS = 10 * 60 * 1000;      
@@ -66,10 +67,10 @@ const fetchBatch = async (usernames: string[]): Promise<CachedProfile[]> => {
   const out: CachedProfile[] = [];
   for (const u of usernames.slice(0, MAX_BATCH)) {
     try {
-      const p: any = await apiClient.get(`/v1/social/user/${encodeURIComponent(u)}/profile`);
+      const p: any = await apiClient.get(`/api/social/user/${encodeURIComponent(u)}/full-profile`);
       out.push({
         username: u,
-        avatarUrl: p?.avatarUrl || p?.profilePictureUrl || p?.data?.avatarUrl || null,
+        avatarUrl: p?.profile?.avatarUrl || p?.profile?.profilePictureUrl || null,
         fetchedAt: now,
       });
     } catch {
@@ -92,12 +93,14 @@ const flushBatch = async () => {
     for (const p of results) {
       memory.set(p.username, p);
       writeDisk(p);
+      DeviceEventEmitter.emit('avatar_cache_updated', p.username); // 🟢 Notify UI of new avatar
     }
     const returned = new Set(results.map((r) => r.username));
     for (const n of names) {
       if (!returned.has(n)) {
         const miss = { username: n, avatarUrl: null, fetchedAt: Date.now() };
         memory.set(n, miss);
+        DeviceEventEmitter.emit('avatar_cache_updated', n);
       }
     }
   }
