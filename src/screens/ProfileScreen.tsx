@@ -1,13 +1,14 @@
 import React, { useState, useCallback, useEffect } from 'react';
 import { useFocusEffect } from '@react-navigation/native';
-import { StyleSheet, Text, View, TouchableOpacity, FlatList, Image, Modal, Alert, RefreshControl, Platform } from 'react-native';
+import { StyleSheet, Text, View, TouchableOpacity, FlatList, Image, Modal, RefreshControl, Platform } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Feather, Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import Toast from 'react-native-toast-message'; // 🟢 Added Toast
+import Toast from 'react-native-toast-message';
 import { apiClient, BASE_URL, systemLogout, uploadMultipart, buildFilePart, API_ROUTES } from '../services/api'; 
 import PostCard from '../components/PostCard';
+import { invalidateAvatar } from '../services/ProfileCache';
 
 export default function ProfileScreen({ navigation, onLogoutTrigger }: any) {
   const [userPosts, setUserPosts] = useState<any[]>([]);
@@ -51,16 +52,17 @@ export default function ProfileScreen({ navigation, onLogoutTrigger }: any) {
     }, [])
   );
 
- const fetchUserProfileAndLogs = async () => {
+  const fetchUserProfileAndLogs = async () => {
     try {
-      // 🟢 NEW: Fetch everything dynamically based on your active username
       const activeUser = await AsyncStorage.getItem('@active_username');
-      const response = await apiClient.get(`/api/social/user/${activeUser}/full-profile`);
+      if (!activeUser) return;
+      
+      const response = await apiClient.get(`/v1/social/user/${encodeURIComponent(activeUser)}/full-profile`);
       
       setUserPosts(response.posts || []);
       
       if (response.profile?.profilePictureUrl) {
-         setAvatarUri(response.profile.profilePictureUrl);
+        setAvatarUri(response.profile.profilePictureUrl);
       }
     } catch (e) {
       console.error("Failed to load personal logs", e);
@@ -129,9 +131,13 @@ export default function ProfileScreen({ navigation, onLogoutTrigger }: any) {
       if (newAvatarUrl) {
         setAvatarUri(newAvatarUrl);
         await AsyncStorage.setItem('@user_avatar', newAvatarUrl);
+
+        // 🟢 FIX: Evict stale null entry from profile cache immediately
+        if (currentUsername) {
+          await invalidateAvatar(currentUsername);
+        }
       }
       
-      // 🟢 Replaced Alert with Toast
       Toast.show({
         type: 'success',
         text1: 'Success',
@@ -140,7 +146,6 @@ export default function ProfileScreen({ navigation, onLogoutTrigger }: any) {
       
     } catch (e: any) {
       setAvatarUri(previousAvatar);
-      // 🟢 Replaced Alert with Toast
       Toast.show({
         type: 'error',
         text1: 'Upload Failed',
@@ -156,14 +161,12 @@ export default function ProfileScreen({ navigation, onLogoutTrigger }: any) {
       await apiClient.delete(API_ROUTES.PROFILE.DELETE_POST(postId));
       setUserPosts(current => current.filter(post => String(post.id) !== String(postId)));
       
-      // 🟢 Replaced Alert with Toast
       Toast.show({
         type: 'success',
         text1: 'Success',
         text2: 'Post permanently deleted.'
       });
     } catch (e: any) {
-      // 🟢 Replaced Alert with Toast
       Toast.show({
         type: 'error',
         text1: 'Delete Failed',
@@ -187,8 +190,7 @@ export default function ProfileScreen({ navigation, onLogoutTrigger }: any) {
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
       <View style={styles.topNav}>
-        <Text style={styles.brandTitle}>GHOST<Text style={{ color: '#8E95A5' }}>SHIELD</Text></Text>
-        {/* 🟢 Added hitSlop */}
+        <Text style={styles.brandTitle}>Caravel<Text style={{ color: '#8E95A5' }}>Glide</Text></Text>
         <TouchableOpacity 
           onPress={() => setMenuVisible(true)} 
           style={styles.iconButton}
@@ -249,7 +251,6 @@ export default function ProfileScreen({ navigation, onLogoutTrigger }: any) {
         )}
       />
 
-      {/* 🟢 Added onRequestClose for Android back swipe */}
       <Modal visible={menuVisible} animationType="slide" transparent={true} onRequestClose={() => setMenuVisible(false)}>
         <View style={styles.modalOverlay}>
           <TouchableOpacity style={{ flex: 1 }} onPress={() => setMenuVisible(false)} />

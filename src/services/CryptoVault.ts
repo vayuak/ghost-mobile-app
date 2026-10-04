@@ -126,7 +126,14 @@ export const getPeerPublicKey = async (
   try {
     // 🟢 Centralized Route
     const res = await apiClient.get(API_ROUTES.AUTH.GET_KEY(user));
-    fetched = res?.publicKey || null;
+    
+    // Aggressively check multiple JSON formats or raw string responses
+    if (typeof res === 'string') {
+      fetched = res;
+    } else {
+      fetched = res?.publicKey || res?.public_key || res?.key || null;
+    }
+    
   } catch (e: any) {
     if (pinned) return pinned;
     throw new NoKeyError(user);

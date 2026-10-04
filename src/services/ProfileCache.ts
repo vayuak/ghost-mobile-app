@@ -1,6 +1,6 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { DeviceEventEmitter } from 'react-native';
-import { apiClient, BASE_URL } from './api';
+import { API_ROUTES, apiClient, BASE_URL } from './api';
 
 const MEM_TTL_MS = 10 * 60 * 1000;      
 const DISK_TTL_MS = 24 * 60 * 60 * 1000; 
@@ -64,13 +64,17 @@ const fetchBatch = async (usernames: string[]): Promise<CachedProfile[]> => {
     }
   } catch { }
 
+ // Replace lines 53-61 in ProfileCache.ts with this:
+
   const out: CachedProfile[] = [];
   for (const u of usernames.slice(0, MAX_BATCH)) {
     try {
-      const p: any = await apiClient.get(`/api/social/user/${encodeURIComponent(u)}/full-profile`);
+      // 🟢 FIX: Use the lightweight profile route, NOT full-profile!
+      const p: any = await apiClient.get(API_ROUTES.SOCIAL.USER_PROFILE(u));
       out.push({
         username: u,
-        avatarUrl: p?.profile?.avatarUrl || p?.profile?.profilePictureUrl || null,
+        // The lightweight route returns the data directly, not wrapped in a 'profile' object
+        avatarUrl: p?.avatarUrl || p?.profilePictureUrl || null,
         fetchedAt: now,
       });
     } catch {

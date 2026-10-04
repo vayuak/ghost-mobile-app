@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { StyleSheet, View, TouchableOpacity, ActivityIndicator, Text, FlatList, TextInput, KeyboardAvoidingView, Platform, Image } from 'react-native';
+import { StyleSheet, View, TouchableOpacity, ActivityIndicator, Text, FlatList, TextInput, KeyboardAvoidingView, Platform, Image, Keyboard } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Feather } from '@expo/vector-icons';
 import { apiClient, API_ROUTES, BASE_URL } from '../services/api';
@@ -7,7 +7,6 @@ import PostCard from '../components/PostCard';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 export default function SinglePostScreen({ route, navigation }: any) {
-  // Extract postId from the deep link route parameters
   const { postId } = route.params;
   
   const [post, setPost] = useState<any>(null);
@@ -18,6 +17,20 @@ export default function SinglePostScreen({ route, navigation }: any) {
   const [isSending, setIsSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [activeUser, setActiveUser] = useState('');
+  
+  // 🟢 Manual Android Keyboard Measurement
+  const [keyboardHeight, setKeyboardHeight] = useState(0);
+
+  useEffect(() => {
+    if (Platform.OS === 'android') {
+      const showSubscription = Keyboard.addListener('keyboardDidShow', (e) => setKeyboardHeight(e.endCoordinates.height));
+      const hideSubscription = Keyboard.addListener('keyboardDidHide', () => setKeyboardHeight(0));
+      return () => {
+        showSubscription.remove();
+        hideSubscription.remove();
+      };
+    }
+  }, []);
 
   useEffect(() => {
     AsyncStorage.getItem('@active_username').then(user => {
@@ -27,11 +40,8 @@ export default function SinglePostScreen({ route, navigation }: any) {
 
   const fetchPostAndComments = async () => {
     try {
-      // 1. Fetch Post Details
       const postResponse = await apiClient.get(API_ROUTES.POST.GET_SINGLE(postId));
       setPost(postResponse);
-
-      // 2. Fetch Comments Thread
       const commentsResponse = await apiClient.get(API_ROUTES.POST.GET_COMMENTS(postId, Date.now()));
       setComments(commentsResponse || []);
     } catch (err: any) {
@@ -52,16 +62,12 @@ export default function SinglePostScreen({ route, navigation }: any) {
     try {
       await apiClient.post(API_ROUTES.POST.CREATE_COMMENT(postId), {
         content: commentInput.trim(),
-        parentId: null // Attach to root post
+        parentId: null 
       });
       
       setCommentInput('');
-      
-      // Refresh comments instantly
       const commentsResponse = await apiClient.get(API_ROUTES.POST.GET_COMMENTS(postId, Date.now()));
       setComments(commentsResponse || []);
-
-      // Optimistically update the PostCard's comment count
       setPost((prev: any) => ({ ...prev, commentCount: (prev.commentCount || 0) + 1 }));
     } catch (err: any) {
       alert(err.message || 'Failed to post comment.');
@@ -70,11 +76,10 @@ export default function SinglePostScreen({ route, navigation }: any) {
     }
   };
 
-  // 🟢 Safely formats avatar URLs for commenters
   const getFullAvatarUrl = (uri: string | null) => {
     if (!uri) return null;
     if (uri.startsWith('http')) return uri;
-    return `${BASE_URL}${uri.startsWith('/') ? uri : `/${uri}`}`;
+    return `${BASE_URL.replace(/\/$/, '')}${uri.startsWith('/') ? uri : `/${uri}`}`;
   };
 
   const renderComment = ({ item }: { item: any }) => {
@@ -102,78 +107,86 @@ export default function SinglePostScreen({ route, navigation }: any) {
     );
   };
 
+  const screenContent = (
+    <>
+      <View style={styles.topNav}>
+       <TouchableOpacity onPress={() => navigation.canGoBack() ? navigation.goBack() : navigation.navigate('MainTabs', { screen: 'Home' })} hitSlop={{ top: 15, bottom: 15, left: 15, right: 15 }}>
+          <Feather name="arrow-left" size={24} color="#FFF" />
+        </TouchableOpacity>
+        <Text style={styles.brandTitle}>POST</Text>
+        <View style={{ width: 24 }} />
+      </View>
+
+      <View style={styles.content}>
+        {isLoading ? (
+          <ActivityIndicator size="large" color="#666" style={{ marginTop: 50 }} />
+        ) : error || !post ? (
+          <View style={styles.errorContainer}>
+            <Feather name="alert-circle" size={40} color="#666" />
+            <Text style={styles.errorText}>{error || "Post not found"}</Text>
+          </View>
+        ) : (
+          <FlatList
+            data={comments}
+            keyExtractor={(item) => item.id.toString()}
+            contentContainerStyle={{ paddingBottom: 20 }}
+            renderItem={renderComment}
+            ListHeaderComponent={
+              <View style={styles.postWrapper}>
+                <PostCard 
+                  post={post} 
+                  currentUsername={activeUser} 
+                  onUserTap={() => navigation.navigate('PublicProfile', { targetUser: post.username })}
+                />
+                <View style={styles.commentsDivider}>
+                  <Text style={styles.commentsHeader}>COMMENTS ({post.commentCount || 0})</Text>
+                </View>
+              </View>
+            }
+            ListEmptyComponent={<Text style={styles.emptyComments}>No comments yet. Be the first!</Text>}
+          />
+        )}
+      </View>
+
+      {!isLoading && !error && post && (
+        <View style={styles.composerContainer}>
+          <TextInput
+            style={styles.commentInput}
+            placeholder="Write a comment..."
+            placeholderTextColor="#666"
+            value={commentInput}
+            onChangeText={setCommentInput}
+            multiline
+            maxLength={200}
+          />
+          <TouchableOpacity 
+            style={[styles.sendBtn, (!commentInput.trim() || isSending) && styles.sendBtnDisabled]} 
+            onPress={handleSendComment}
+            disabled={!commentInput.trim() || isSending}
+          >
+            {isSending ? (
+              <ActivityIndicator size="small" color="#FFF" />
+            ) : (
+              <Feather name="send" size={18} color={commentInput.trim() ? '#FFF' : '#666'} />
+            )}
+          </TouchableOpacity>
+        </View>
+      )}
+    </>
+  );
+
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
-      <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
-        
-        {/* Top Header */}
-        <View style={styles.topNav}>
-          <TouchableOpacity onPress={() => navigation.canGoBack() ? navigation.goBack() : navigation.navigate('Home')} hitSlop={{ top: 15, bottom: 15, left: 15, right: 15 }}>
-            <Feather name="arrow-left" size={24} color="#FFF" />
-          </TouchableOpacity>
-          <Text style={styles.brandTitle}>POST</Text>
-          <View style={{ width: 24 }} />
+      {/* 🟢 Platform-Specific Keyboard Wrapper */}
+      {Platform.OS === 'ios' ? (
+        <KeyboardAvoidingView style={{ flex: 1 }} behavior="padding">
+          {screenContent}
+        </KeyboardAvoidingView>
+      ) : (
+        <View style={{ flex: 1, paddingBottom: keyboardHeight }}>
+          {screenContent}
         </View>
-
-        <View style={styles.content}>
-          {isLoading ? (
-            <ActivityIndicator size="large" color="#666" style={{ marginTop: 50 }} />
-          ) : error || !post ? (
-            <View style={styles.errorContainer}>
-              <Feather name="alert-circle" size={40} color="#666" />
-              <Text style={styles.errorText}>{error || "Post not found"}</Text>
-            </View>
-          ) : (
-            <FlatList
-              data={comments}
-              keyExtractor={(item) => item.id.toString()}
-              contentContainerStyle={{ paddingBottom: 20 }}
-              renderItem={renderComment}
-              // 🟢 The PostCard acts as the header above the comments
-              ListHeaderComponent={
-                <View style={styles.postWrapper}>
-                  <PostCard 
-                    post={post} 
-                    currentUsername={activeUser} 
-                    onUserTap={() => navigation.navigate('PublicProfile', { targetUser: post.username })}
-                  />
-                  <View style={styles.commentsDivider}>
-                    <Text style={styles.commentsHeader}>COMMENTS ({post.commentCount || 0})</Text>
-                  </View>
-                </View>
-              }
-              ListEmptyComponent={<Text style={styles.emptyComments}>No comments yet. Be the first!</Text>}
-            />
-          )}
-        </View>
-
-        {/* Comment Composer Box */}
-        {!isLoading && !error && post && (
-          <View style={styles.composerContainer}>
-            <TextInput
-              style={styles.commentInput}
-              placeholder="Write a comment..."
-              placeholderTextColor="#666"
-              value={commentInput}
-              onChangeText={setCommentInput}
-              multiline
-              maxLength={200}
-            />
-            <TouchableOpacity 
-              style={[styles.sendBtn, (!commentInput.trim() || isSending) && styles.sendBtnDisabled]} 
-              onPress={handleSendComment}
-              disabled={!commentInput.trim() || isSending}
-            >
-              {isSending ? (
-                <ActivityIndicator size="small" color="#FFF" />
-              ) : (
-                <Feather name="send" size={18} color={commentInput.trim() ? '#FFF' : '#666'} />
-              )}
-            </TouchableOpacity>
-          </View>
-        )}
-        
-      </KeyboardAvoidingView>
+      )}
     </SafeAreaView>
   );
 }

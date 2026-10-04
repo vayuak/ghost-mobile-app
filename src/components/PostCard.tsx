@@ -94,7 +94,6 @@ export default function PostCard({ post, currentUsername: propUsername, onDelete
     } finally { setIsVoting(false); }
   };
 
-  // 🟢 UPDATED: Native Share Link generation using your HTTPS domain
   const handleShare = async () => {
     try {
       const appDomain = process.env.EXPO_PUBLIC_API_BASE_URL || 'https://sandbag-sterling-leggings.ngrok-free.dev';
@@ -104,12 +103,12 @@ export default function PostCard({ post, currentUsername: propUsername, onDelete
       
       await Share.share({ 
         message: `Check out this post by @${displayUsername} on GhostShield!\n\n"${snippet}"\n\nTap to view: ${shareUrl}`,
-        url: shareUrl, // iOS uses this field explicitly to make the link clickable in native popups
+        url: shareUrl, 
         title: post.title || 'GhostShield Post'
       });
 
-      // Optionally increment share count on backend
-      apiClient.post(`/api/social/post/${post.id}/share`).catch(() => {});
+      // 🟢 FIX: Routed through /v1/ Gateway
+      apiClient.post(`/v1/social/post/${post.id}/share`).catch(() => {});
     } catch (error) { 
       console.warn("Share logic failed", error); 
     }

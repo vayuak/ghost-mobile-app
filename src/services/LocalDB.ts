@@ -72,6 +72,8 @@ export const isUserBlocked = (username: string): boolean => {
   }
 };
 
+// ... keep imports and other functions identical
+
 export const saveLocalMessage = (
   roomId: string,
   senderUsername: string,
@@ -81,21 +83,23 @@ export const saveLocalMessage = (
   targetUsername: string | null = null,
   msgId: string | null = null,
   sentAt: string | null = null,
-  skipEmit: boolean = false // 🟢 NEW: Allow silent saves for bulk processing
+  skipEmit: boolean = false, 
+  isRead: boolean = false // 🟢 NEW: Allow direct read-state injection
 ) => {
   if (Platform.OS === 'web') return;
   initLocalDatabase();
 
   db.runSync(
-    `INSERT OR IGNORE INTO messages (msg_id, room_id, sender_username, target_username, content, media_url, media_type, sent_at, is_read) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0)`,
-    [msgId, roomId, senderUsername, targetUsername, content, mediaUrl, mediaType, sentAt || new Date().toISOString()]
+    `INSERT OR IGNORE INTO messages (msg_id, room_id, sender_username, target_username, content, media_url, media_type, sent_at, is_read) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    // 🟢 Inject the isRead flag into the SQL statement (1 for read, 0 for unread)
+    [msgId, roomId, senderUsername, targetUsername, content, mediaUrl, mediaType, sentAt || new Date().toISOString(), isRead ? 1 : 0]
   );
   
-  // 🟢 Only emit if we aren't bulk syncing
   if (!skipEmit) {
     DeviceEventEmitter.emit('db_chats_updated');
   }
 };
+
 
 export const markRoomAsRead = (roomId: string) => {
   if (isWeb) return;

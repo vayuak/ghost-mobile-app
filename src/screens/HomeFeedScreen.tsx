@@ -1,10 +1,11 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { StyleSheet, Text, View, TextInput, TouchableOpacity, FlatList, ActivityIndicator, Modal, Image, ScrollView, RefreshControl } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context'; 
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { useFocusEffect } from '@react-navigation/native';
 import { apiClient, BASE_URL, API_ROUTES } from '../services/api';
 import PostCard from '../components/PostCard';
-
+import { ensureKeysPublished } from '../services/CryptoVault';
 const SkeletonPost = () => (
   <View style={styles.skeletonCard}>
     <View style={styles.skeletonHeader}>
@@ -16,7 +17,7 @@ const SkeletonPost = () => (
   </View>
 );
 
-export default function HomeFeedScreen({ navigation }: any) {
+export default function HomeFeedScreen({ navigation, route }: any) {
   const [searchResults, setSearchResults] = useState<any[]>([]);
   const [searchType, setSearchType] = useState<'POSTS' | 'USERS'>('POSTS');
   const [isLoading, setIsLoading] = useState(true);
@@ -25,7 +26,7 @@ export default function HomeFeedScreen({ navigation }: any) {
   const [page, setPage] = useState(0);
   const [isFetchingMore, setIsFetchingMore] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
-  const [hasMore, setHasMore] = useState(true); // 🟢 PREVENTS RUNAWAY REQUESTS
+  const [hasMore, setHasMore] = useState(true);
 
   const [visiblePosts, setVisiblePosts] = useState<string[]>([]);
   const [metaMatrix, setMetaMatrix] = useState<any[]>([]);
@@ -36,10 +37,26 @@ export default function HomeFeedScreen({ navigation }: any) {
   const [citySearchQuery, setCitySearchQuery] = useState('');
   const [activeUser, setActiveUser] = useState<string>('');
 
+  const searchInputRef = useRef<TextInput>(null);
+
   const viewabilityConfig = useRef({ itemVisiblePercentThreshold: 50 }).current;
   const onViewableItemsChanged = useRef(({ viewableItems }: any) => {
     setVisiblePosts(viewableItems.map((v: any) => String(v.item.id)));
   }).current;
+useEffect(() => {
+  // 🟢 Silently guarantees the user is "messageable" the moment they hit the home screen
+  ensureKeysPublished().catch(err => console.warn("Background key publish skipped:", err));
+}, []);
+  useFocusEffect(
+    useCallback(() => {
+      if (route.params?.autoSearch) {
+        setSearchQuery(route.params.autoSearch);
+        setTimeout(() => {
+          searchInputRef.current?.focus();
+        }, 100);
+      }
+    }, [route.params?.autoSearch])
+  );
 
   useEffect(() => {
     AsyncStorage.getItem('@active_username').then(user => {
@@ -60,19 +77,16 @@ export default function HomeFeedScreen({ navigation }: any) {
   }, []);
 
   const executeQueryDiscovery = async (targetQuery: string, targetCity: string, pageNum: number = 0, append = false) => {
-    // 🟢 HARD STOP: Block pagination requests if we already know no more items exist
     if (append && !hasMore) return;
 
     if (!append && !isRefreshing) setIsLoading(true);
     
     try {
       if (!targetQuery.trim()) {
-        // 🟢 FIX 405: Changed from apiClient.post to apiClient.get
         const res = await apiClient.get(API_ROUTES.SEARCH.FEED(targetCity, pageNum, 20));
         const data = Array.isArray(res) ? res : res.content || [];
         setSearchType('POSTS');
         
-        // 🟢 LOCK PAGINATION: If fewer than 20 posts return, lock future calls
         if (!data || data.length < 20) {
           setHasMore(false);
         }
@@ -82,11 +96,11 @@ export default function HomeFeedScreen({ navigation }: any) {
         const res = await apiClient.get(API_ROUTES.SEARCH.DISCOVER(targetQuery.trim()));
         setSearchType(res.type || 'POSTS');
         setSearchResults(res.results || res || []);
-        setHasMore(false); // Search results do not paginate
+        setHasMore(false);
       }
     } catch (err) { 
       if (!append) setSearchResults([]); 
-      setHasMore(false); // Lock on error to prevent request loops
+      setHasMore(false);
     } finally { 
       setIsLoading(false); 
       setIsFetchingMore(false);
@@ -96,7 +110,7 @@ export default function HomeFeedScreen({ navigation }: any) {
 
   useEffect(() => {
     setPage(0);
-    setHasMore(true); // Reset pagination lock when switching cities or searching
+    setHasMore(true);
     const delayDebounce = setTimeout(() => executeQueryDiscovery(searchQuery, selectedCity, 0, false), 400);
     return () => clearTimeout(delayDebounce);
   }, [searchQuery, selectedCity]);
@@ -104,12 +118,11 @@ export default function HomeFeedScreen({ navigation }: any) {
   const handleRefresh = () => {
     setIsRefreshing(true);
     setPage(0);
-    setHasMore(true); // Reset pagination lock on manual pull-to-refresh
+    setHasMore(true);
     executeQueryDiscovery(searchQuery, selectedCity, 0, false);
   };
 
   const handleLoadMore = () => {
-    // 🟢 PREVENT SPAM: Never trigger if locked, loading, refreshing, or searching
     if (!hasMore || isFetchingMore || isLoading || searchQuery.trim()) return;
     
     setIsFetchingMore(true);
@@ -131,6 +144,7 @@ export default function HomeFeedScreen({ navigation }: any) {
         <View style={styles.searchBarContainer}>
           <Text style={styles.searchPrefix}>🔍</Text>
           <TextInput 
+            ref={searchInputRef}
             style={styles.searchInput}
             placeholder="Search users or posts..."
             placeholderTextColor="#666666"
@@ -207,7 +221,7 @@ export default function HomeFeedScreen({ navigation }: any) {
           contentContainerStyle={{ paddingBottom: 20 }}
           refreshControl={<RefreshControl refreshing={isRefreshing} onRefresh={handleRefresh} tintColor="#FFFFFF" />}
           onEndReached={handleLoadMore} 
-          onEndReachedThreshold={0.1} // Lowered trigger distance to prevent false-positives on short screens
+          onEndReachedThreshold={0.1}
           onViewableItemsChanged={onViewableItemsChanged}
           viewabilityConfig={viewabilityConfig}
           ListFooterComponent={isFetchingMore ? <ActivityIndicator size="small" color="#666" style={{ margin: 20 }} /> : null}

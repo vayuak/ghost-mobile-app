@@ -1,171 +1,98 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { View, Text, TextInput, TouchableOpacity, ScrollView, StyleSheet, Platform, Image, Alert, KeyboardAvoidingView, DeviceEventEmitter, Keyboard } from 'react-native';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import React, { useState, useCallback, useEffect } from 'react';
+import { View, Text, TouchableOpacity, FlatList, StyleSheet, Image, ActivityIndicator } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { Feather } from '@expo/vector-icons';
-import { apiClient, API_ROUTES, BASE_URL } from '../services/api';
-import { useNetwork } from '../services/GlobalNetworkManager'; 
-import { ensureKeysPublished, encryptForPeer, getPeerPublicKey, acceptPeerKeyChange, KeyChangedError, NoKeyError } from '../services/CryptoVault';
-import { initLocalDatabase, saveLocalMessage, getLocalMessages, markRoomAsRead, clearLocalMessages } from '../services/LocalDB';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { useFocusEffect } from '@react-navigation/native';
+import { apiClient, BASE_URL, API_ROUTES } from '../services/api';
+import { getLocalMessages } from '../services/LocalDB';
 
-export let currentActiveChat = '';
-
-interface MessageItem {
-  msgId?: string;
-  sender_username: string;
-  content: string;
+interface InboxThread {
+  roomId: string;
+  targetUser: string;
+  lastMessage: string;
   timestamp: string;
-  undecryptable?: boolean;
-  status?: 'sending' | 'failed' | 'sent'; 
+  unreadCount: number;
 }
 
-type CryptoState = 'checking' | 'ready' | 'peer-has-no-key' | 'key-changed' | 'error';
-
-export default function GossipsChatScreen({ route, navigation }: any) {
-  const targetUser = (route.params?.targetUser || '').trim().toLowerCase();
-  const insets = useSafeAreaInsets();
-  const { sendStompMessage } = useNetwork(); 
-
-  const [messages, setMessages] = useState<MessageItem[]>([]);
-  const [chatInput, setChatInput] = useState('');
-  const [activeUser, setActiveUser] = useState('');
-  const [targetAvatar, setTargetAvatar] = useState<string | null>(null);
-
-  const [cryptoState, setCryptoState] = useState<CryptoState>('checking');
-  const [lastError, setLastError] = useState<string | null>(null);
-  const [keyboardHeight, setKeyboardHeight] = useState(0);
-
-  const roomIdRef = useRef<string>('');
-  const activeUserRef = useRef<string>('');
-  const scrollViewRef = useRef<ScrollView>(null);
-
-  const scrollToEnd = (animated = true) => {
-    setTimeout(() => scrollViewRef.current?.scrollToEnd({ animated }), 100);
-  };
+export default function GossipsInboxScreen({ navigation }: any) {
+  const [threads, setThreads] = useState<InboxThread[]>([]);
+  const [avatars, setAvatars] = useState<{ [username: string]: string }>({});
+  const [isLoading, setIsLoading] = useState(true);
+  const [activeUser, setActiveUser] = useState<string>('');
 
   useEffect(() => {
-    let isMounted = true;
-    currentActiveChat = targetUser; 
-
-    const boot = async () => {
-      try {
-        initLocalDatabase();
-        const stored = (await AsyncStorage.getItem('@active_username')) || '';
-        const me = stored.trim().toLowerCase();
-
-        if (!isMounted) return;
-        setActiveUser(me);
-        activeUserRef.current = me;
-        roomIdRef.current = [me, targetUser].sort().join('_');
-        
-        loadLocalHistory(roomIdRef.current);
-
-        // 🟢 FIX: Directly fetch DP from backend
-        apiClient.get(`/api/social/user/${targetUser}/profile`).then(res => {
-            if (isMounted && res?.avatarUrl) {
-                setTargetAvatar(res.avatarUrl.startsWith('http') ? res.avatarUrl : `${BASE_URL}${res.avatarUrl}`);
-            }
-        }).catch(() => {});
-
-        try { await ensureKeysPublished(); } catch (e: any) { }
-        if (!isMounted) return;
-
-        try {
-          await getPeerPublicKey(targetUser);
-          setCryptoState('ready');
-        } catch (e: any) {
-          if (!isMounted) return;
-          if (e instanceof KeyChangedError) setCryptoState('key-changed');
-          else if (e instanceof NoKeyError) setCryptoState('peer-has-no-key');
-          else { setCryptoState('error'); setLastError(`Encryption Key Error: ${e?.message}`); }
-        }
-      } catch (e: any) {
-        setLastError(e?.message || 'Unknown startup error.');
-      }
-    };
-
-    boot();
-
-    const dbSub = DeviceEventEmitter.addListener('db_chats_updated', () => {
-      if (roomIdRef.current) {
-        loadLocalHistory(roomIdRef.current);
-        scrollToEnd(true);
-      }
+    AsyncStorage.getItem('@active_username').then(user => {
+      if (user) setActiveUser(user.replace(/^@/, '').trim().toLowerCase());
     });
+  }, []);
 
-    return () => {
-      isMounted = false;
-      currentActiveChat = ''; 
-      dbSub.remove();
-    };
-  }, [targetUser]);
-
-  const loadLocalHistory = (roomId: string) => {
-    try {
-      markRoomAsRead(roomId); 
-      const history = getLocalMessages(roomId);
-      setMessages((current) => {
-        const dbMsgs = Array.isArray(history) ? (history as MessageItem[]) : [];
-        const pendingMsgs = current.filter(m => m.status === 'sending' || m.status === 'failed');
-        const pendingNotSaved = pendingMsgs.filter(p => !dbMsgs.some(d => d.msgId === p.msgId));
-        return [...dbMsgs, ...pendingNotSaved];
-      });
-      scrollToEnd(false);
-    } catch (e: any) {
-      setMessages([]);
-    }
-  };
-
-  const processAndSend = async (plainTextPayload: string, clientMsgId: string, sentAt: string) => {
-    const roomId = roomIdRef.current;
-    try {
-      const envelope = await encryptForPeer(plainTextPayload, targetUser);
-      sendStompMessage('/app/shadow/send', {
-        v: envelope.v,
-        msgId: clientMsgId,
-        roomId,
-        senderUsername: activeUserRef.current,
-        targetUsername: targetUser,
-        sentAt,
-        ephemeralPublicKey: envelope.senderPublicKey,
-        ciphertext: envelope.ciphertext,
-        iv: envelope.iv,
-      });
-
-      saveLocalMessage(roomId, activeUserRef.current, plainTextPayload, null, null, targetUser, clientMsgId, sentAt);
-      markRoomAsRead(roomId);
-    } catch (e: any) {
-      if (e instanceof KeyChangedError) setCryptoState('key-changed');
-      else if (e instanceof NoKeyError) setCryptoState('peer-has-no-key');
-      setMessages((prev) => prev.map(m => m.msgId === clientMsgId ? { ...m, status: 'failed' } : m));
-      Alert.alert('Could not send', e?.message || 'Encryption failed.');
-    }
-  };
-
-  const handleSend = async () => {
-    const text = chatInput.trim();
-    if (!text) return;
+  const loadInbox = async () => {
+    if (!activeUser) return;
     
-    if (cryptoState !== 'ready') {
-      Alert.alert('Cannot encrypt', 'Encryption keys are not ready for this conversation.');
-      return;
+    try {
+      const allMessages = getLocalMessages(''); 
+      const threadMap = new Map<string, InboxThread>();
+      
+      allMessages.forEach((msg: any) => {
+        const isMe = msg.sender_username === activeUser;
+        const rawTarget = isMe ? msg.target_username : msg.sender_username;
+        const target = (rawTarget || '').replace(/^@/, '').trim().toLowerCase();
+        if (!target) return;
+
+        const existing = threadMap.get(target);
+        if (!existing || new Date(msg.timestamp) > new Date(existing.timestamp)) {
+          threadMap.set(target, {
+            roomId: msg.roomId || [activeUser, target].sort().join('_'),
+            targetUser: target,
+            lastMessage: msg.content?.startsWith('DATA_IMAGE::') ? '📷 Image' : msg.content,
+            timestamp: msg.timestamp,
+            unreadCount: (!isMe && !msg.isRead) ? (existing?.unreadCount || 0) + 1 : (existing?.unreadCount || 0)
+          });
+        } else if (!isMe && !msg.isRead) {
+          existing.unreadCount += 1;
+        }
+      });
+
+      const sortedThreads = Array.from(threadMap.values()).sort((a, b) => 
+        new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
+      );
+
+      setThreads(sortedThreads);
+      hydrateAvatars(sortedThreads.map(t => t.targetUser));
+
+    } catch (e) {
+      console.error("Failed to load inbox", e);
+    } finally {
+      setIsLoading(false);
     }
-
-    setChatInput(''); 
-    const clientMsgId = `${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
-    const sentAt = new Date().toISOString();
-
-    const optimisticMsg: MessageItem = { msgId: clientMsgId, sender_username: activeUserRef.current, content: text, timestamp: sentAt, status: 'sending' };
-    setMessages((prev) => [...prev, optimisticMsg]);
-    scrollToEnd(true);
-
-    processAndSend(text, clientMsgId, sentAt);
   };
 
-  const handleAcceptKeyChange = async () => {
-    try { await acceptPeerKeyChange(targetUser); setCryptoState('ready'); }
-    catch { setCryptoState('error'); }
+  const hydrateAvatars = async (usernames: string[]) => {
+    const uniqueUsers = Array.from(new Set(usernames.map(u => u.replace(/^@/, '').trim().toLowerCase()).filter(Boolean)));
+    
+    for (const user of uniqueUsers) {
+      if (avatars[user]) continue; 
+
+      try {
+        const response = await apiClient.get(API_ROUTES.SOCIAL.USER_PROFILE(user));
+        if (response && (response.avatarUrl || response.profilePictureUrl)) {
+          const rawUrl = response.avatarUrl || response.profilePictureUrl;
+          const fullUrl = rawUrl.startsWith('http') 
+            ? rawUrl 
+            : `${BASE_URL.replace(/\/$/, '')}${rawUrl.startsWith('/') ? rawUrl : `/${rawUrl}`}`;
+          
+          setAvatars(prev => ({ ...prev, [user]: fullUrl }));
+        }
+      } catch (e) { }
+    }
   };
+
+  useFocusEffect(
+    useCallback(() => {
+      if (activeUser) loadInbox();
+    }, [activeUser])
+  );
 
   const formatTime = (iso: string) => {
     const d = new Date(iso);
@@ -173,86 +100,104 @@ export default function GossipsChatScreen({ route, navigation }: any) {
     const today = new Date();
     return d.toDateString() === today.toDateString()
       ? d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-      : `${d.toLocaleDateString([], { day: '2-digit', month: 'short' })} ${d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
+      : d.toLocaleDateString([], { day: '2-digit', month: 'short' });
+  };
+
+  const renderItem = ({ item }: { item: InboxThread }) => {
+    const avatarUrl = avatars[item.targetUser];
+
+    return (
+      <TouchableOpacity 
+        style={styles.threadRow} 
+        onPress={() => navigation.navigate('GossipsChat', { targetUser: item.targetUser })}
+      >
+        <TouchableOpacity 
+          style={styles.avatarContainer} 
+          onPress={() => navigation.navigate('PublicProfile', { targetUser: item.targetUser })}
+        >
+          {avatarUrl ? (
+            <Image source={{ uri: avatarUrl }} style={styles.avatarImage} />
+          ) : (
+            <View style={styles.avatarPlaceholder}>
+              <Text style={styles.avatarLetter}>{item.targetUser ? item.targetUser[0].toUpperCase() : '?'}</Text>
+            </View>
+          )}
+        </TouchableOpacity>
+
+        <View style={styles.threadContent}>
+          <View style={styles.threadHeader}>
+            <Text style={styles.threadUsername} numberOfLines={1}>@{item.targetUser}</Text>
+            <Text style={styles.threadTime}>{formatTime(item.timestamp)}</Text>
+          </View>
+          
+          <View style={styles.threadFooter}>
+            <Text style={[styles.threadLastMessage, item.unreadCount > 0 && styles.threadLastMessageUnread]} numberOfLines={1}>
+              {item.lastMessage}
+            </Text>
+            {item.unreadCount > 0 && (
+              <View style={styles.unreadBadge}>
+                <Text style={styles.unreadBadgeText}>{item.unreadCount}</Text>
+              </View>
+            )}
+          </View>
+        </View>
+      </TouchableOpacity>
+    );
   };
 
   return (
-    <View style={[styles.container, { paddingTop: insets.top }]}>
+    <SafeAreaView style={styles.container} edges={['top']}>
       <View style={styles.header}>
-        <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1 }}>
-          <TouchableOpacity style={styles.backBtn} onPress={() => navigation.goBack()} hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}>
-            <Feather name="arrow-left" size={24} color="#FFFFFF" />
-          </TouchableOpacity>
-          <View style={styles.identity}>
-            <TouchableOpacity style={styles.avatar} onPress={() => navigation.navigate('PublicProfile', { targetUser })}>
-              {targetAvatar ? <Image source={{ uri: targetAvatar }} style={styles.avatarImg} /> : <Text style={styles.avatarLetter}>{targetUser ? targetUser[0]?.toUpperCase() : '?'}</Text>}
-            </TouchableOpacity>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.peerName} numberOfLines={1}>@{targetUser || 'unknown'}</Text>
-            </View>
-          </View>
-        </View>
+        <Text style={styles.headerTitle}>GOSSIPS</Text>
+        {/* 🟢 Pencil Icon redirects to Home search with @ focus */}
+        <TouchableOpacity 
+          hitSlop={{ top: 15, bottom: 15, left: 15, right: 15 }}
+          onPress={() => navigation.navigate('Home', { autoSearch: '@' })}
+        >
+          <Feather name="edit" size={20} color="#FFF" />
+        </TouchableOpacity>
       </View>
 
-      <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
-        <ScrollView ref={scrollViewRef} style={styles.scrollArea} contentContainerStyle={{ paddingHorizontal: 16, paddingTop: 16, paddingBottom: 16 }} onContentSizeChange={() => scrollToEnd(false)}>
-          {messages.length === 0 ? (
-            <View style={styles.empty}>
-              <Feather name="message-square" size={40} color="#262626" />
-              <Text style={styles.emptyText}>No messages yet</Text>
+      {isLoading ? (
+        <ActivityIndicator size="large" color="#666" style={{ marginTop: 50 }} />
+      ) : (
+        <FlatList
+          data={threads}
+          keyExtractor={(item) => item.roomId}
+          renderItem={renderItem}
+          contentContainerStyle={{ paddingBottom: 20 }}
+          ListEmptyComponent={
+            <View style={styles.emptyContainer}>
+              <Feather name="message-circle" size={50} color="#262626" />
+              <Text style={styles.emptyTitle}>No Chats Yet</Text>
+              <Text style={styles.emptySub}>Search for users to start an encrypted conversation.</Text>
             </View>
-          ) : (
-            messages.map((item, i) => {
-              const isMe = (item.sender_username || '').trim().toLowerCase() === activeUser;
-              return (
-                <View key={item.msgId || i.toString()} style={[styles.row, isMe ? styles.rowMine : styles.rowTheirs]}>
-                  <View style={[styles.bubble, isMe ? styles.bubbleMine : styles.bubbleTheirs]}>
-                    <Text style={styles.bubbleText}>{item.content}</Text>
-                    <View style={{ flexDirection: 'row', justifyContent: 'flex-end', alignItems: 'center', marginTop: 3 }}>
-                      <Text style={styles.time}>{formatTime(item.timestamp)}</Text>
-                      {isMe && item.status === 'sending' && <Feather name="clock" size={10} color="rgba(255,255,255,0.4)" style={{ marginLeft: 4 }} />}
-                    </View>
-                  </View>
-                </View>
-              );
-            })
-          )}
-        </ScrollView>
-
-        <View style={[styles.composer, { paddingBottom: Math.max(insets.bottom, 10) }]}>
-          {/* 🟢 IMAGE ATTACH BUTTON COMPLETELY REMOVED */}
-          <TextInput style={styles.input} value={chatInput} onChangeText={setChatInput} placeholder={`Message @${targetUser}…`} placeholderTextColor="#666666" multiline />
-          <TouchableOpacity style={[styles.sendBtn, !chatInput.trim() && styles.sendBtnOff]} onPress={handleSend} disabled={!chatInput.trim()}>
-            <Feather name="send" size={18} color={chatInput.trim() ? '#FFFFFF' : '#666666'} />
-          </TouchableOpacity>
-        </View>
-      </KeyboardAvoidingView>
-    </View>
+          }
+        />
+      )}
+    </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#0A0A0A' },
-  header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16, paddingBottom: 12, paddingTop: 10, backgroundColor: '#0A0A0A', borderBottomWidth: 1, borderBottomColor: '#1A1A1A' },
-  backBtn: { marginRight: 14 },
-  identity: { flexDirection: 'row', alignItems: 'center', flex: 1 },
-  avatar: { width: 36, height: 36, borderRadius: 18, backgroundColor: '#262626', justifyContent: 'center', alignItems: 'center', marginRight: 12, overflow: 'hidden' },
-  avatarImg: { width: '100%', height: '100%' },
-  avatarLetter: { color: '#FFFFFF', fontWeight: 'bold', fontSize: 15 },
-  peerName: { fontSize: 16, fontWeight: '700', color: '#FFFFFF' },
-  composer: { flexDirection: 'row', alignItems: 'flex-end', paddingHorizontal: 12, paddingTop: 10, backgroundColor: '#0A0A0A', borderTopWidth: 1, borderTopColor: '#1A1A1A' },
-  input: { flex: 1, backgroundColor: '#1A1A1A', borderRadius: 22, paddingHorizontal: 16, paddingTop: 11, paddingBottom: 11, color: '#FFFFFF', fontSize: 15, maxHeight: 110, minHeight: 44, borderWidth: 1, borderColor: '#262626' },
-  sendBtn: { backgroundColor: '#333333', width: 44, height: 44, borderRadius: 22, justifyContent: 'center', alignItems: 'center', marginLeft: 8 },
-  sendBtnOff: { backgroundColor: '#1A1A1A' },
-  scrollArea: { flex: 1 },
-  row: { marginBottom: 10, flexDirection: 'row', width: '100%' },
-  rowMine: { justifyContent: 'flex-end' },
-  rowTheirs: { justifyContent: 'flex-start' },
-  bubble: { paddingHorizontal: 13, paddingVertical: 9, borderRadius: 16, maxWidth: '78%' },
-  bubbleMine: { backgroundColor: '#262626', borderTopLeftRadius: 16, borderBottomLeftRadius: 16, borderTopRightRadius: 16, borderBottomRightRadius: 4, borderWidth: 1, borderColor: '#333333' },
-  bubbleTheirs: { backgroundColor: '#121212', borderTopLeftRadius: 16, borderBottomRightRadius: 16, borderTopRightRadius: 16, borderBottomLeftRadius: 4, borderWidth: 1, borderColor: '#1F1F1F' },
-  bubbleText: { fontSize: 15, lineHeight: 20, color: '#E9EDEF' },
-  time: { fontSize: 9.5, color: 'rgba(255,255,255,0.40)' },
-  empty: { alignItems: 'center', marginTop: 60, paddingHorizontal: 40 },
-  emptyText: { color: '#FFFFFF', fontSize: 15, fontWeight: '800', marginTop: 14 }
+  container: { flex: 1, backgroundColor: '#000000' },
+  header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 20, paddingVertical: 15, borderBottomWidth: 1, borderBottomColor: '#1A1A1A' },
+  headerTitle: { color: '#FFF', fontSize: 18, fontWeight: '900', letterSpacing: 1 },
+  threadRow: { flexDirection: 'row', paddingHorizontal: 16, paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: '#111' },
+  avatarContainer: { marginRight: 14 },
+  avatarImage: { width: 50, height: 50, borderRadius: 25, backgroundColor: '#262626' },
+  avatarPlaceholder: { width: 50, height: 50, borderRadius: 25, backgroundColor: '#262626', justifyContent: 'center', alignItems: 'center' },
+  avatarLetter: { color: '#FFF', fontSize: 18, fontWeight: 'bold' },
+  threadContent: { flex: 1, justifyContent: 'center' },
+  threadHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 4 },
+  threadUsername: { color: '#FFF', fontSize: 16, fontWeight: '700', flex: 1, paddingRight: 10 },
+  threadTime: { color: '#666', fontSize: 12, fontWeight: '500' },
+  threadFooter: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  threadLastMessage: { color: '#8E95A5', fontSize: 14, flex: 1, paddingRight: 15 },
+  threadLastMessageUnread: { color: '#E9EDEF', fontWeight: '600' },
+  unreadBadge: { backgroundColor: '#34C759', paddingHorizontal: 7, paddingVertical: 2, borderRadius: 10, minWidth: 20, alignItems: 'center' },
+  unreadBadgeText: { color: '#000', fontSize: 11, fontWeight: '800' },
+  emptyContainer: { alignItems: 'center', justifyContent: 'center', marginTop: '40%' },
+  emptyTitle: { color: '#FFF', fontSize: 18, fontWeight: '800', marginTop: 16 },
+  emptySub: { color: '#666', fontSize: 14, marginTop: 8, textAlign: 'center', paddingHorizontal: 40 }
 });

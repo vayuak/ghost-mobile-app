@@ -4,7 +4,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as SecureStore from 'expo-secure-store'; 
 import { Feather } from '@expo/vector-icons';
 import { apiClient, API_ROUTES } from '../services/api';
-
+import { initializeDeviceKeys } from '../services/CryptoVault';
 export default function AuthScreen({ onAuthSuccess }: { onAuthSuccess: () => void }) {
   const [currentMode, setCurrentMode] = useState<'LOGIN' | 'REGISTER' | 'FORGOT_PASSWORD'>('LOGIN');
   const [workflowStep, setWorkflowStep] = useState<1 | 2>(1); 
@@ -112,12 +112,6 @@ const sanitizeError = (err: any) => {
     return true;
   };
 
-  const generateDeviceKeyPair = async () => {
-    const pseudoPublicKey = `pub_key_${Date.now()}_${Math.random().toString(36).substring(2)}`;
-    const pseudoPrivateKey = `priv_key_${Date.now()}_${Math.random().toString(36).substring(2)}`;
-    return { publicKey: pseudoPublicKey, privateKey: pseudoPrivateKey };
-  };
-
   const handleLogin = async () => {
     setUiMessage(null);
     if (!contactId || !password) return setUiMessage({ text: 'Email and password are required.', type: 'error' });
@@ -152,14 +146,16 @@ const sanitizeError = (err: any) => {
     
     setLoading(true);
     try {
-      const { publicKey, privateKey } = await generateDeviceKeyPair();
-      await SecureStore.setItemAsync('ghost_private_key', privateKey);
+      const cleanUsername = username.toLowerCase().trim();
+      
+      // 🟢 FIX: Generate mathematically valid Curve25519 NaCl keys and auto-save them to AsyncStorage
+      const realPublicKey = await initializeDeviceKeys(cleanUsername);
 
       await apiClient.post(API_ROUTES.AUTH.REGISTER, { 
-        username: username.toLowerCase().trim(), 
+        username: cleanUsername, 
         password, 
         contactIdentifier: contactId.trim(),
-        publicKey: publicKey 
+        publicKey: realPublicKey // 🟢 Sends the real, valid cryptographic key to the backend
       });
       
       setUiMessage({ text: `Verification code sent to ${contactId.trim()}`, type: 'success' }); 

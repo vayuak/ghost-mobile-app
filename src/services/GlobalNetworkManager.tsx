@@ -3,6 +3,7 @@ import { AppState, DeviceEventEmitter, Platform } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Client } from '@stomp/stompjs';
 import * as Notifications from 'expo-notifications'; 
+import Toast from 'react-native-toast-message'; 
 import { P2P_WS_URL, apiClient } from './api';
 import { saveLocalMessage, hasLocalMessage, isUserBlocked } from './LocalDB';
 import { decryptFromPeer } from './CryptoVault';
@@ -59,19 +60,34 @@ export const GlobalNetworkManager: React.FC<{ children: React.ReactNode }> = ({ 
           const roomId = payload.roomId || [me, sender].sort().join('_');
           const originTs = payload.sentAt || new Date().toISOString();
           
-          saveLocalMessage(roomId, sender, plaintext, null, null, me, payload.msgId, originTs, isBulkSync);
+          // 🟢 1. Check if user is currently looking at this specific chat
+          const isCurrentlyReading = (sender === currentActiveChat);
           
-          // 🟢 SILENT FETCH: If the avatar is missing locally, grab it now!
+          // 🟢 2. Save to DB (Marks as Read instantly if they are in the chat)
+          saveLocalMessage(roomId, sender, plaintext, null, null, me, payload.msgId, originTs, isBulkSync, isCurrentlyReading);
+          
           if (!peekAvatarUrl(sender)) {
              getAvatarUrl(sender).catch(() => {});
           }
 
-          if (!isBulkSync && Platform.OS !== 'web' && sender !== currentActiveChat) {
+          // 🟢 3. Trigger In-App Bubble & Push ONLY if they are NOT in the chat
+          if (!isBulkSync && !isCurrentlyReading && Platform.OS !== 'web') {
             const isImage = plaintext.startsWith('DATA_IMAGE::');
+            const previewText = isImage ? '📷 Sent an image' : plaintext;
+
+            Toast.show({
+              type: 'info',
+              text1: `@${sender}`,
+              text2: previewText,
+              position: 'top',
+              topOffset: 55,
+              visibilityTime: 4000,
+            });
+
             await Notifications.scheduleNotificationAsync({
               content: {
                 title: `@${sender}`,
-                body: isImage ? '📷 Sent an image' : plaintext,
+                body: previewText,
                 sound: true,
               },
               trigger: null, 

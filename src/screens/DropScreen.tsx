@@ -1,15 +1,14 @@
 import React, { useState, useEffect, useRef } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity, FlatList, StyleSheet,
-  Alert, ActivityIndicator, RefreshControl, Switch, AppState,
-  AppStateStatus, ScrollView, Image, Platform 
+  Alert, RefreshControl, Switch, AppState, AppStateStatus, ScrollView, Image, Platform 
 } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as Notifications from 'expo-notifications'; 
 import { useHighAccuracyLocation } from '../hooks/useHighAccuracyLocation';
 import { apiClient, API_ROUTES, BASE_URL } from '../services/api'; 
-import { peekAvatarUrl, preloadAvatars } from '../services/ProfileCache'; 
+import { peekAvatarUrl, preloadAvatars, toAbsoluteUrl } from '../services/ProfileCache'; 
 
 Notifications.setNotificationHandler({
   handleNotification: async () => ({
@@ -138,15 +137,14 @@ export const DropsScreen: React.FC<DropsScreenProps> = ({ onUnreadCountChange, n
     try {
       const user = await apiClient.get(API_ROUTES.AUTH.ME);
       if (user?.username && isMountedRef.current) {
-        setCurrentUsername(user.username);
+        setCurrentUsername(user.username.replace(/^@/, '').trim().toLowerCase());
       }
     } catch (e) { }
   };
 
-  // 🟢 SAFELY FORMATS AVATARS
   const getSecureImageSource = (uri: string) => { 
-      const cleanUrl = uri.startsWith('http') ? uri : `${BASE_URL}${uri.startsWith('/') ? uri : `/${uri}`}`;
-      return { uri: cleanUrl }; 
+    const cleanUrl = uri.startsWith('http') ? uri : `${BASE_URL}${uri.startsWith('/') ? uri : `/${uri}`}`;
+    return { uri: cleanUrl }; 
   };
 
   const scanRadar = async () => {
@@ -160,11 +158,20 @@ export const DropsScreen: React.FC<DropsScreenProps> = ({ onUnreadCountChange, n
       if (!isMountedRef.current) return;
       const freshDrops = response || [];
 
-      const usernames = freshDrops.map((drop) => drop.username);
-      preloadAvatars(usernames);
+      const usernames = freshDrops.map((drop) => drop.username.replace(/^@/, '').trim().toLowerCase());
+      await preloadAvatars(usernames);
 
       const dropsWithAvatars = freshDrops.map((drop) => {
-        return { ...drop, avatarUrl: peekAvatarUrl(drop.username) };
+        const cleanUser = drop.username.replace(/^@/, '').trim().toLowerCase();
+        let dp = peekAvatarUrl(cleanUser);
+        if (!dp && drop.avatarUrl) {
+          dp = toAbsoluteUrl(drop.avatarUrl);
+        }
+        return { 
+          ...drop, 
+          username: cleanUser,
+          avatarUrl: dp 
+        };
       });
 
       const sortedDrops = dropsWithAvatars.sort((a, b) => {
@@ -431,7 +438,7 @@ const styles = StyleSheet.create({
     padding: 10, 
     borderRadius: 8, 
     alignItems: 'center', 
-    justifyContent: 'center', 
+    justifyContent: 'center',
     borderWidth: 1, 
     borderColor: '#5C4600',
     marginTop: 4 

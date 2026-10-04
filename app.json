@@ -11,13 +11,32 @@
       "supportsTablet": true
     },
     "android": {
+      "package": "com.azymarch.glider",
       "adaptiveIcon": {
         "backgroundColor": "#000000",
         "foregroundImage": "./assets/android-icon-foreground.png"
       },
       "softwareKeyboardLayoutMode": "resize",
       "predictiveBackGestureEnabled": false,
-      "package": "com.azymarch.glider"
+      "intentFilters": [
+        {
+          "action": "VIEW",
+          "autoVerify": true,
+          "data": [
+            {
+              "scheme": "https",
+              "host": "sandbag-sterling-leggings.ngrok-free.dev",
+              "pathPrefix": "/"
+            },
+            {
+              "scheme": "http",
+              "host": "sandbag-sterling-leggings.ngrok-free.dev",
+              "pathPrefix": "/"
+            }
+          ],
+          "category": ["BROWSABLE", "DEFAULT"]
+        }
+      ]
     },
     "web": {
       "favicon": "./assets/favicon.png"

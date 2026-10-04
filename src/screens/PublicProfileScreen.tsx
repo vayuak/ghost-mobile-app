@@ -8,13 +8,15 @@ import PostCard from '../components/PostCard';
 
 export default function PublicProfileScreen({ route, navigation }: any) {
   const { targetUser } = route.params;
+  // 🟢 FIX: Declare cleanHandle globally at component scope so both API and buttons use it
+  const cleanHandle = (targetUser || '').replace(/^@/, '').trim().toLowerCase();
+
   const [userProfile, setUserProfile] = useState<any>(null);
   const [userPosts, setUserPosts] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [authToken, setAuthToken] = useState<string | null>(null);
   const [visiblePosts, setVisiblePosts] = useState<string[]>([]);
   
-  // 🟢 Hides message button on own profile
   const [activeUser, setActiveUser] = useState('');
 
   const viewabilityConfig = useRef({ itemVisiblePercentThreshold: 50 }).current;
@@ -28,16 +30,13 @@ export default function PublicProfileScreen({ route, navigation }: any) {
     });
   }, []);
 
-useEffect(() => {
+  useEffect(() => {
     const fetchData = async () => {
       const token = await AsyncStorage.getItem('@ghost_token');
       setAuthToken(token);
 
       try {
-        // 🟢 Strip '@' symbol and spaces to prevent URL path mismatch
-        const cleanHandle = targetUser.replace(/^@/, '').trim().toLowerCase();
-        const response = await apiClient.get(`/api/social/user/${cleanHandle}/full-profile`);
-        
+        const response = await apiClient.get(`/v1/social/user/${encodeURIComponent(cleanHandle)}/full-profile`);
         setUserProfile(response.profile);
         setUserPosts(response.posts || []);
       } catch (error) {
@@ -47,7 +46,8 @@ useEffect(() => {
       }
     };
     fetchData();
-  }, [targetUser]);
+  }, [cleanHandle]);
+
   const getFullAvatarUrl = (uri: string | null) => {
     if (!uri) return null;
     if (uri.startsWith('http')) return uri;
@@ -55,7 +55,7 @@ useEffect(() => {
   };
 
   const fullAvatarUrl = getFullAvatarUrl(userProfile?.avatarUrl || userProfile?.profilePictureUrl);
-  const isSelf = targetUser.toLowerCase() === activeUser;
+  const isSelf = cleanHandle === activeUser;
 
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
@@ -63,7 +63,7 @@ useEffect(() => {
         <TouchableOpacity onPress={() => navigation.goBack()} hitSlop={{ top: 15, bottom: 15, left: 15, right: 15 }}>
           <Feather name="arrow-left" size={24} color="#FFF" />
         </TouchableOpacity>
-        <Text style={styles.brandTitle}>@{targetUser}</Text>
+        <Text style={styles.brandTitle}>@{cleanHandle}</Text>
         <View style={{ width: 24 }} />
       </View>
 
@@ -86,11 +86,14 @@ useEffect(() => {
                 )}
               </View>
 
-              <Text style={styles.usernameText}>@{targetUser}</Text>
+              <Text style={styles.usernameText}>@{cleanHandle}</Text>
 
-              {/* 🟢 Hides the Message button if this is the active user */}
               {!isSelf && (
-                <TouchableOpacity style={styles.messageBtn} onPress={() => navigation.navigate('GossipsChat', { targetUser })}>
+                <TouchableOpacity 
+                   style={styles.messageBtn} 
+                   // 🟢 FIX: Safe navigation passing cleanHandle (strips @ symbol)
+                   onPress={() => navigation.navigate('GossipsChat', { targetUser: cleanHandle })}
+                >
                   <Feather name="message-circle" size={16} color="#000" style={{ marginRight: 8 }} />
                   <Text style={styles.messageBtnText}>Message</Text>
                 </TouchableOpacity>

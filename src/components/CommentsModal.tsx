@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, TextInput, TouchableOpacity, FlatList, KeyboardAvoidingView, Platform, ActivityIndicator, Alert, Image } from 'react-native';
+import { View, Text, TextInput, TouchableOpacity, FlatList, KeyboardAvoidingView, Platform, ActivityIndicator, Alert, Image, Keyboard } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import Toast from 'react-native-toast-message'; // 🟢 Added Toast
+import Toast from 'react-native-toast-message'; 
 import { apiClient, BASE_URL, API_ROUTES } from '../services/api';
 import { Feather } from '@expo/vector-icons';
 
@@ -29,21 +29,34 @@ export default function CommentsModal({ postId, currentUsername: propUsername, o
   const [loading, setLoading] = useState(true);
   const [localUsername, setLocalUsername] = useState<string | null>(propUsername || null);
 
+  const [keyboardHeight, setKeyboardHeight] = useState(0);
+
+  useEffect(() => {
+    if (Platform.OS === 'android') {
+      const showSubscription = Keyboard.addListener('keyboardDidShow', (e) => setKeyboardHeight(e.endCoordinates.height));
+      const hideSubscription = Keyboard.addListener('keyboardDidHide', () => setKeyboardHeight(0));
+      return () => {
+        showSubscription.remove();
+        hideSubscription.remove();
+      };
+    }
+  }, []);
+
   useEffect(() => {
     fetchComments();
     if (!propUsername) {
       AsyncStorage.getItem('@active_username').then(user => {
-        if (user) setLocalUsername(user);
+        if (user) setLocalUsername(user.replace(/^@/, '').trim().toLowerCase());
       });
     }
   }, [propUsername]);
 
-  const activeUser = propUsername || localUsername;
+  const activeUser = (propUsername || localUsername || '').replace(/^@/, '').trim().toLowerCase();
 
   const fetchComments = async () => {
     try {
       const response = await apiClient.get(API_ROUTES.POST.GET_COMMENTS(postId, new Date().getTime()));
-      setComments(response.data || response); 
+      setComments(response.data || response || []); 
     } catch (error) {
       console.error("Failed to load comments", error);
     } finally {
@@ -65,13 +78,7 @@ export default function CommentsModal({ postId, currentUsername: propUsername, o
       fetchComments(); 
       onCommentAdded(); 
     } catch (error: any) {
-      const msg = error.response?.data?.error || error.message || "Failed to post comment";
-      // 🟢 Replaced Alert with Toast
-      Toast.show({
-        type: 'error',
-        text1: 'Error',
-        text2: msg
-      });
+      Toast.show({ type: 'error', text1: 'Error', text2: error.response?.data?.error || error.message || "Failed to post comment" });
     }
   };
 
@@ -81,46 +88,30 @@ export default function CommentsModal({ postId, currentUsername: propUsername, o
       setComments(current => current.filter(c => String(c.id) !== String(commentId)));
       onCommentDeleted(); 
     } catch (error: any) {
-      const msg = error.response?.data?.error || error.message || "Failed to delete comment";
-      // 🟢 Replaced Alert with Toast
-      Toast.show({
-        type: 'error',
-        text1: 'Error',
-        text2: msg
-      });
+      Toast.show({ type: 'error', text1: 'Error', text2: error.response?.data?.error || error.message || "Failed to delete comment" });
     }
   };
 
   const handleDeleteComment = (commentId: number) => {
     if (Platform.OS === 'web') {
-      if (window.confirm("Are you sure you want to delete this comment?")) {
-        executeDelete(commentId);
-      }
+      if (window.confirm("Are you sure you want to delete this comment?")) executeDelete(commentId);
     } else {
-      // Destructive confirmation remains as Alert.alert
       Alert.alert("Delete Comment", "Are you sure you want to delete this comment?", [
         { text: "No", style: "cancel" },
-        { 
-          text: "Yes", 
-          style: "destructive",
-          onPress: () => executeDelete(commentId)
-        }
+        { text: "Yes", style: "destructive", onPress: () => executeDelete(commentId) }
       ]);
     }
   };
 
   const renderAvatar = (url: string | null, fallbackUsername: string) => {
     if (url) {
-      const formattedUrl = url.startsWith('http') ? url : `${BASE_URL}${url}`;
-      return <Image 
-        source={{ uri: formattedUrl }} 
-        style={{ width: 28, height: 28, borderRadius: 14, marginRight: 10, backgroundColor: '#262626' }} 
-      />;
+      const formattedUrl = url.startsWith('http') ? url : `${BASE_URL.replace(/\/$/, '')}${url.startsWith('/') ? url : `/${url}`}`;
+      return <Image source={{ uri: formattedUrl }} style={{ width: 28, height: 28, borderRadius: 14, marginRight: 10, backgroundColor: '#262626' }} />;
     }
     return (
       <View style={{ width: 28, height: 28, borderRadius: 14, backgroundColor: '#262626', justifyContent: 'center', alignItems: 'center', marginRight: 10 }}>
         <Text style={{ color: '#FFFFFF', fontWeight: 'bold', fontSize: 12 }}>
-          {fallbackUsername ? fallbackUsername[0]?.toUpperCase() : 'U'}
+          {fallbackUsername ? fallbackUsername.replace(/^@/, '').trim()[0]?.toUpperCase() : 'U'}
         </Text>
       </View>
     );
@@ -128,38 +119,34 @@ export default function CommentsModal({ postId, currentUsername: propUsername, o
 
   const renderComment = ({ item }: { item: Comment }) => {
     const isReply = item.parentId !== null;
-    const isOwner = activeUser && item.username && activeUser.trim().toLowerCase() === item.username.trim().toLowerCase();
+    const cleanCommentAuthor = (item.username || '').replace(/^@/, '').trim().toLowerCase();
+    const isOwner = activeUser && cleanCommentAuthor && activeUser === cleanCommentAuthor;
 
     return (
-      <View style={{ 
-        marginLeft: isReply ? 32 : 16, 
-        marginRight: 16, 
-        marginTop: 16,
-        paddingLeft: isReply ? 12 : 0, 
-        borderLeftWidth: isReply ? 2 : 0, 
-        borderColor: '#262626'
-      }}>
+      <View style={{ marginLeft: isReply ? 32 : 16, marginRight: 16, marginTop: 16, paddingLeft: isReply ? 12 : 0, borderLeftWidth: isReply ? 2 : 0, borderColor: '#262626' }}>
         <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-          <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-            {renderAvatar(item.avatarUrl, item.username)}
-            <Text style={{ color: 'white', fontWeight: 'bold', fontSize: 14 }}>@{item.username}</Text>
-          </View>
+          
+          <TouchableOpacity onPress={() => {
+            if (cleanCommentAuthor.startsWith('user')) {
+              Toast.show({ type: 'info', text1: 'Anonymous User', text2: 'No public profile established yet.' });
+            } else {
+              onClose(); 
+            }
+          }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+              {renderAvatar(item.avatarUrl, cleanCommentAuthor)}
+              <Text style={{ color: 'white', fontWeight: 'bold', fontSize: 14 }}>@{cleanCommentAuthor}</Text>
+            </View>
+          </TouchableOpacity>
           
           {isOwner && (
-            // 🟢 Added hitSlop
-            <TouchableOpacity 
-              onPress={() => handleDeleteComment(item.id)} 
-              style={{ padding: 6, backgroundColor: 'rgba(255, 59, 48, 0.1)', borderRadius: 6 }}
-              hitSlop={{ top: 15, bottom: 15, left: 15, right: 15 }}
-            >
+            <TouchableOpacity onPress={() => handleDeleteComment(item.id)} style={{ padding: 6, backgroundColor: 'rgba(255, 59, 48, 0.1)', borderRadius: 6 }} hitSlop={{ top: 15, bottom: 15, left: 15, right: 15 }}>
               <Feather name="trash-2" size={15} color="#FF3B30" />
             </TouchableOpacity>
           )}
         </View>
 
-        <Text style={{ color: '#E0E0E0', marginTop: 8, fontSize: 14, paddingLeft: 38, lineHeight: 20 }}>
-          {item.content}
-        </Text>
+        <Text style={{ color: '#E0E0E0', marginTop: 8, fontSize: 14, paddingLeft: 38, lineHeight: 20 }}>{item.content}</Text>
         
         <TouchableOpacity style={{ marginTop: 8, paddingLeft: 38 }} onPress={() => setReplyingTo(item)}>
           <Text style={{ color: '#666666', fontSize: 11, fontWeight: '800', letterSpacing: 0.5 }}>REPLY</Text>
@@ -168,11 +155,10 @@ export default function CommentsModal({ postId, currentUsername: propUsername, o
     );
   };
 
-  return (
-    <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={{ flex: 1, backgroundColor: '#121212' }}>
+  const modalContent = (
+    <>
       <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', padding: 16, borderBottomWidth: 1, borderColor: '#262626', marginTop: Platform.OS === 'ios' ? 0 : 10 }}>
         <Text style={{ color: 'white', fontSize: 18, fontWeight: 'bold' }}>Comments</Text>
-        {/* 🟢 Added hitSlop */}
         <TouchableOpacity onPress={onClose} style={{ padding: 4 }} hitSlop={{ top: 15, bottom: 15, left: 15, right: 15 }}>
           <Feather name="x" size={24} color="white" />
         </TouchableOpacity>
@@ -193,8 +179,7 @@ export default function CommentsModal({ postId, currentUsername: propUsername, o
       <View style={{ padding: 16, borderTopWidth: 1, borderColor: '#262626', backgroundColor: '#000000' }}>
         {replyingTo && (
           <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
-            <Text style={{ color: '#8E95A5', fontSize: 12 }}>Replying to @{replyingTo.username}</Text>
-            {/* 🟢 Added hitSlop */}
+            <Text style={{ color: '#8E95A5', fontSize: 12 }}>Replying to @{replyingTo.username.replace(/^@/, '')}</Text>
             <TouchableOpacity onPress={() => setReplyingTo(null)} hitSlop={{ top: 15, bottom: 15, left: 15, right: 15 }}>
               <Feather name="x-circle" size={16} color="#FF4444" />
             </TouchableOpacity>
@@ -204,7 +189,7 @@ export default function CommentsModal({ postId, currentUsername: propUsername, o
           <TextInput
             value={newComment} 
             onChangeText={setNewComment}
-            placeholder={replyingTo ? `Reply to @${replyingTo.username}...` : "Type a comment..."} 
+            placeholder={replyingTo ? `Reply to @${replyingTo.username.replace(/^@/, '')}...` : "Type a comment..."} 
             placeholderTextColor="#666666"
             style={{ flex: 1, color: 'white', backgroundColor: '#1A1A1A', paddingHorizontal: 16, paddingVertical: 12, borderRadius: 20, maxHeight: 100, borderWidth: 1, borderColor: '#262626' }}
             multiline
@@ -214,6 +199,16 @@ export default function CommentsModal({ postId, currentUsername: propUsername, o
           </TouchableOpacity>
         </View>
       </View>
+    </>
+  );
+
+  return Platform.OS === 'ios' ? (
+    <KeyboardAvoidingView style={{ flex: 1, backgroundColor: '#121212' }} behavior="padding">
+      {modalContent}
     </KeyboardAvoidingView>
+  ) : (
+    <View style={{ flex: 1, backgroundColor: '#121212', paddingBottom: keyboardHeight }}>
+      {modalContent}
+    </View>
   );
 }
