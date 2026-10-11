@@ -1,11 +1,11 @@
 import React, { useState, useCallback, useEffect } from 'react';
-import { View, Text, TouchableOpacity, FlatList, StyleSheet, Image, ActivityIndicator } from 'react-native';
+import { View, Text, TouchableOpacity, FlatList, StyleSheet, Image, ActivityIndicator, Alert, DeviceEventEmitter } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Feather } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useFocusEffect } from '@react-navigation/native';
 import { apiClient, BASE_URL, API_ROUTES } from '../services/api';
-import { getLocalMessages } from '../services/LocalDB';
+import { getRecentConversations, clearLocalMessages } from '../services/LocalDB';
 
 interface InboxThread {
   roomId: string;
@@ -27,42 +27,13 @@ export default function GossipsInboxScreen({ navigation }: any) {
     });
   }, []);
 
-  const loadInbox = async () => {
+  const loadInbox = () => {
     if (!activeUser) return;
-    
     try {
-      const allMessages = getLocalMessages(''); 
-      const threadMap = new Map<string, InboxThread>();
-      
-      allMessages.forEach((msg: any) => {
-        const isMe = msg.sender_username === activeUser;
-        const rawTarget = isMe ? msg.target_username : msg.sender_username;
-        const target = (rawTarget || '').replace(/^@/, '').trim().toLowerCase();
-        if (!target) return;
-
-        const existing = threadMap.get(target);
-        if (!existing || new Date(msg.timestamp) > new Date(existing.timestamp)) {
-          threadMap.set(target, {
-            roomId: msg.roomId || [activeUser, target].sort().join('_'),
-            targetUser: target,
-            lastMessage: msg.content?.startsWith('DATA_IMAGE::') ? '📷 Image' : msg.content,
-            timestamp: msg.timestamp,
-            unreadCount: (!isMe && !msg.isRead) ? (existing?.unreadCount || 0) + 1 : (existing?.unreadCount || 0)
-          });
-        } else if (!isMe && !msg.isRead) {
-          existing.unreadCount += 1;
-        }
-      });
-
-      const sortedThreads = Array.from(threadMap.values()).sort((a, b) => 
-        new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
-      );
-
-      setThreads(sortedThreads);
-      hydrateAvatars(sortedThreads.map(t => t.targetUser));
-
-    } catch (e) {
-      console.error("Failed to load inbox", e);
+      // 🟢 FIX: Replaces the manual DB loop with the dedicated query
+      const t = getRecentConversations(activeUser);
+      setThreads(t);
+      hydrateAvatars(t.map(x => x.targetUser));
     } finally {
       setIsLoading(false);
     }
@@ -70,7 +41,7 @@ export default function GossipsInboxScreen({ navigation }: any) {
 
   const hydrateAvatars = async (usernames: string[]) => {
     const uniqueUsers = Array.from(new Set(usernames.map(u => u.replace(/^@/, '').trim().toLowerCase()).filter(Boolean)));
-    
+
     for (const user of uniqueUsers) {
       if (avatars[user]) continue; 
 
@@ -81,7 +52,7 @@ export default function GossipsInboxScreen({ navigation }: any) {
           const fullUrl = rawUrl.startsWith('http') 
             ? rawUrl 
             : `${BASE_URL.replace(/\/$/, '')}${rawUrl.startsWith('/') ? rawUrl : `/${rawUrl}`}`;
-          
+
           setAvatars(prev => ({ ...prev, [user]: fullUrl }));
         }
       } catch (e) { }
@@ -93,6 +64,30 @@ export default function GossipsInboxScreen({ navigation }: any) {
       if (activeUser) loadInbox();
     }, [activeUser])
   );
+
+  useEffect(() => {
+    const subscription = DeviceEventEmitter.addListener('db_chats_updated', () => {
+      if (activeUser) loadInbox();
+    });
+
+    return () => {
+      subscription.remove();
+    };
+  }, [activeUser]);
+
+  const handleLongPress = (roomId: string, targetUser: string) => {
+    Alert.alert('Manage Chat', `Options for @${targetUser}`, [
+      { text: 'Clear History', onPress: () => {
+          clearLocalMessages(roomId, true, targetUser, activeUser);
+          loadInbox();
+      }},
+      { text: 'Delete Chat', style: 'destructive', onPress: () => {
+          clearLocalMessages(roomId, false);
+          loadInbox();
+      }},
+      { text: 'Cancel', style: 'cancel' }
+    ]);
+  };
 
   const formatTime = (iso: string) => {
     const d = new Date(iso);
@@ -110,6 +105,7 @@ export default function GossipsInboxScreen({ navigation }: any) {
       <TouchableOpacity 
         style={styles.threadRow} 
         onPress={() => navigation.navigate('GossipsChat', { targetUser: item.targetUser })}
+        onLongPress={() => handleLongPress(item.roomId, item.targetUser)}
       >
         <TouchableOpacity 
           style={styles.avatarContainer} 
@@ -129,7 +125,7 @@ export default function GossipsInboxScreen({ navigation }: any) {
             <Text style={styles.threadUsername} numberOfLines={1}>@{item.targetUser}</Text>
             <Text style={styles.threadTime}>{formatTime(item.timestamp)}</Text>
           </View>
-          
+
           <View style={styles.threadFooter}>
             <Text style={[styles.threadLastMessage, item.unreadCount > 0 && styles.threadLastMessageUnread]} numberOfLines={1}>
               {item.lastMessage}
@@ -149,7 +145,6 @@ export default function GossipsInboxScreen({ navigation }: any) {
     <SafeAreaView style={styles.container} edges={['top']}>
       <View style={styles.header}>
         <Text style={styles.headerTitle}>GOSSIPS</Text>
-        {/* 🟢 Pencil Icon redirects to Home search with @ focus */}
         <TouchableOpacity 
           hitSlop={{ top: 15, bottom: 15, left: 15, right: 15 }}
           onPress={() => navigation.navigate('Home', { autoSearch: '@' })}

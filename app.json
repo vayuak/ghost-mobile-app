@@ -12,6 +12,7 @@
     },
     "android": {
       "package": "com.azymarch.glider",
+      "versionCode": 1, 
       "adaptiveIcon": {
         "backgroundColor": "#000000",
         "foregroundImage": "./assets/android-icon-foreground.png"
@@ -23,36 +24,25 @@
           "action": "VIEW",
           "autoVerify": true,
           "data": [
-            {
-              "scheme": "https",
-              "host": "sandbag-sterling-leggings.ngrok-free.dev",
-              "pathPrefix": "/"
-            },
-            {
-              "scheme": "http",
-              "host": "sandbag-sterling-leggings.ngrok-free.dev",
-              "pathPrefix": "/"
-            }
+            { "scheme": "https", "host": "sandbag-sterling-leggings.ngrok-free.dev", "pathPrefix": "/" },
+            { "scheme": "http", "host": "sandbag-sterling-leggings.ngrok-free.dev", "pathPrefix": "/" }
           ],
           "category": ["BROWSABLE", "DEFAULT"]
         }
       ]
     },
-    "web": {
-      "favicon": "./assets/favicon.png"
-    },
+    "web": { "favicon": "./assets/favicon.png" },
     "plugins": [
       "expo-video",
       "expo-sqlite",
       "expo-font",
       "expo-status-bar",
       "expo-secure-store",
-      "react-native-compressor"
+      "react-native-compressor",
+      "expo-notifications" 
     ],
     "extra": {
-      "eas": {
-        "projectId": "7006ab11-c720-42d8-99b3-7bedb78d379a"
-      }
+      "eas": { "projectId": "7006ab11-c720-42d8-99b3-7bedb78d379a" }
     }
   }
 }

@@ -39,7 +39,6 @@ export const API_ROUTES = {
     ME: '/v1/auth/me',
     LOGOUT: '/v1/auth/logout',
     PUBLISH_KEY: '/v1/auth/keys',
-    // 🟢 FIX: Prevents /v1/auth/keys/ 500 errors
     GET_KEY: (username: string) => `/v1/auth/keys/${safeParam(username)}`,
   },
   CAMPFIRE: {
@@ -55,7 +54,6 @@ export const API_ROUTES = {
   SOCIAL: {
     CITIES: '/v1/social/meta/tier-one-cities',
     CREATE_POST: '/v1/social/post/upload-and-create',
-    
     USER_PROFILE: (username: string) => `/v1/social/user/${safeParam(username)}/profile`,
   },
   PROFILE: {
@@ -111,6 +109,7 @@ export const uploadMultipart = (
 
     xhr.setRequestHeader('Accept', 'application/json');
     xhr.setRequestHeader('X-Ghost-Shield-Key', SHIELD_KEY);
+    xhr.setRequestHeader('ngrok-skip-browser-warning', 'true'); // 🟢 FIX: Bypasses Ngrok Interstitial for uploads
     if (token) xhr.setRequestHeader('Authorization', `Bearer ${token}`);
 
     if (onProgress && xhr.upload) {
@@ -173,6 +172,7 @@ export const apiClient = {
 
     headers.set('Content-Type', 'application/json');
     headers.set('X-Ghost-Shield-Key', SHIELD_KEY);
+    headers.set('ngrok-skip-browser-warning', 'true'); // 🟢 FIX: Bypasses Ngrok Interstitial for all standard API calls
 
     const isAuthRoute =
       endpoint.includes('/auth/login') ||

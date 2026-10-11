@@ -33,7 +33,6 @@ export const initLocalDatabase = () => {
     );
   `);
 
-  // 🟢 NEW: Local Blocklist Table
   db.execSync(`
     CREATE TABLE IF NOT EXISTS blocked_users (
       username TEXT PRIMARY KEY,
@@ -41,10 +40,14 @@ export const initLocalDatabase = () => {
     );
   `);
 
+  // 🟢 NEW: Tombstone table to prevent deleted messages from syncing back
+  db.execSync(`CREATE TABLE IF NOT EXISTS deleted_msg_ids (msg_id TEXT PRIMARY KEY);`);
+
   try { db.execSync(`ALTER TABLE messages ADD COLUMN msg_id TEXT;`); } catch { }
   try { db.execSync(`ALTER TABLE messages ADD COLUMN target_username TEXT;`); } catch { }
   try { db.execSync(`ALTER TABLE messages ADD COLUMN sent_at TEXT;`); } catch { }
   try { db.execSync(`ALTER TABLE messages ADD COLUMN is_read INTEGER DEFAULT 0;`); } catch { }
+  try { db.execSync(`ALTER TABLE messages ADD COLUMN status TEXT;`); } catch { } // 🟢 NEW: message status
 
   try { db.execSync(`CREATE UNIQUE INDEX IF NOT EXISTS idx_messages_msgid ON messages(msg_id) WHERE msg_id IS NOT NULL;`); } catch { }
   db.execSync(`CREATE INDEX IF NOT EXISTS idx_messages_room ON messages(room_id, sent_at);`);
@@ -53,14 +56,12 @@ export const initLocalDatabase = () => {
   initialized = true;
 };
 
-// 🟢 NEW: Block a user locally
 export const blockLocalUser = (username: string) => {
   if (isWeb) return;
   initLocalDatabase();
   db.runSync(`INSERT OR IGNORE INTO blocked_users (username) VALUES (?)`, [username.trim().toLowerCase()]);
 };
 
-// 🟢 NEW: Check if a user is blocked
 export const isUserBlocked = (username: string): boolean => {
   if (isWeb || !username) return false;
   initLocalDatabase();
@@ -72,8 +73,6 @@ export const isUserBlocked = (username: string): boolean => {
   }
 };
 
-// ... keep imports and other functions identical
-
 export const saveLocalMessage = (
   roomId: string,
   senderUsername: string,
@@ -84,15 +83,15 @@ export const saveLocalMessage = (
   msgId: string | null = null,
   sentAt: string | null = null,
   skipEmit: boolean = false, 
-  isRead: boolean = false // 🟢 NEW: Allow direct read-state injection
+  isRead: boolean = false,
+  status: string | null = null // 🟢 NEW
 ) => {
   if (Platform.OS === 'web') return;
   initLocalDatabase();
 
   db.runSync(
-    `INSERT OR IGNORE INTO messages (msg_id, room_id, sender_username, target_username, content, media_url, media_type, sent_at, is_read) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    // 🟢 Inject the isRead flag into the SQL statement (1 for read, 0 for unread)
-    [msgId, roomId, senderUsername, targetUsername, content, mediaUrl, mediaType, sentAt || new Date().toISOString(), isRead ? 1 : 0]
+    `INSERT OR IGNORE INTO messages (msg_id, room_id, sender_username, target_username, content, media_url, media_type, sent_at, is_read, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [msgId, roomId, senderUsername, targetUsername, content, mediaUrl, mediaType, sentAt || new Date().toISOString(), isRead ? 1 : 0, status]
   );
   
   if (!skipEmit) {
@@ -100,12 +99,46 @@ export const saveLocalMessage = (
   }
 };
 
-
 export const markRoomAsRead = (roomId: string) => {
   if (isWeb) return;
   initLocalDatabase();
-  db.runSync(`UPDATE messages SET is_read = 1 WHERE room_id = ?`, [roomId]);
-  DeviceEventEmitter.emit('db_chats_updated');
+  // 🟢 FIX: Only update rows that actually need it to prevent infinite UI re-render loops
+  const res = db.runSync(`UPDATE messages SET is_read = 1 WHERE room_id = ? AND is_read = 0`, [roomId]);
+  if (res.changes > 0) DeviceEventEmitter.emit('db_chats_updated');
+};
+
+const RANK: Record<string, number> = { failed: 1, pending: 1, sent: 2, delivered: 3, read: 4 };
+
+// 🟢 NEW: Advances message statuses logically (ticks)
+export const setMessageStatus = (msgId: string, status: string) => {
+  if (isWeb || !msgId || !(status in RANK)) return;
+  initLocalDatabase();
+  const r = RANK[status];
+  const res = db.runSync(
+    `UPDATE messages SET status = ? WHERE msg_id = ? AND (
+       (? = 'failed'  AND status = 'pending') OR
+       (? = 'pending' AND status = 'failed')  OR
+       (? >= 2 AND (CASE status WHEN 'read' THEN 4 WHEN 'delivered' THEN 3 WHEN 'sent' THEN 2 ELSE 1 END) < ?))`,
+    [status, msgId, status, status, r, r]);
+  if (res.changes > 0) DeviceEventEmitter.emit('db_chats_updated');
+};
+
+// 🟢 NEW: Fetches the outbox to retry sending
+export const getPendingOutgoing = (me: string): any[] => {
+  if (isWeb || !me) return [];
+  initLocalDatabase();
+  return db.getAllSync(
+    `SELECT msg_id AS msgId, room_id AS roomId, target_username AS target, content, sent_at AS sentAt
+     FROM messages WHERE sender_username = ? AND status = 'pending' AND msg_id IS NOT NULL ORDER BY id ASC`, [me]);
+};
+
+// 🟢 NEW: Identifies which messages need "blue ticks" sent back
+export const getUnreadIncomingIds = (roomId: string, me: string): string[] => {
+  if (isWeb) return [];
+  initLocalDatabase();
+  return (db.getAllSync(
+    `SELECT msg_id FROM messages WHERE room_id = ? AND sender_username != ? AND is_read = 0 AND msg_id IS NOT NULL`,
+    [roomId, me]) as any[]).map((r: any) => r.msg_id);
 };
 
 export const getUnreadChatsCount = (activeUsername: string): number => {
@@ -123,8 +156,6 @@ export const getUnreadChatsCount = (activeUsername: string): number => {
   }
 };
 
-// 🟢 ENHANCED: Deletes the chat completely and fires the event to clear UI
-// 🟢 WHATSAPP STYLE: clearLocalMessages now accepts 'keepInInbox'
 export const clearLocalMessages = (
   roomId: string, 
   keepInInbox: boolean = false, 
@@ -134,10 +165,12 @@ export const clearLocalMessages = (
   if (Platform.OS === 'web') return;
   initLocalDatabase();
   
-  // 1. Wipe the history
+  // 🟢 FIX: Tombstone deleted messages so they don't get pulled back from the server on next sync
+  db.runSync(`INSERT OR IGNORE INTO deleted_msg_ids (msg_id) SELECT msg_id FROM messages WHERE room_id = ? AND msg_id IS NOT NULL`, [roomId]);
+  
+  // Wipe the history
   db.runSync(`DELETE FROM messages WHERE room_id = ?`, [roomId]);
 
-  // 2. If "Clear Chat" was pressed, insert a phantom system message to keep it in the inbox
   if (keepInInbox && targetUser && activeUser) {
     db.runSync(
       `INSERT INTO messages (room_id, sender_username, target_username, content, media_type, is_read) 
@@ -153,7 +186,11 @@ export const hasLocalMessage = (msgId: string): boolean => {
   if (isWeb || !msgId) return false;
   initLocalDatabase();
   try {
-    const row: any = db.getFirstSync(`SELECT 1 AS present FROM messages WHERE msg_id = ?`, [msgId]);
+    // 🟢 FIX: Include the tombstone table so deleted messages are flagged as "already seen"
+    const row: any = db.getFirstSync(
+      `SELECT 1 FROM messages WHERE msg_id = ? UNION ALL SELECT 1 FROM deleted_msg_ids WHERE msg_id = ? LIMIT 1`, 
+      [msgId, msgId]
+    );
     return !!row;
   } catch {
     return false;
@@ -164,7 +201,8 @@ export const getLocalMessages = (roomId: string) => {
   if (isWeb) return [];
   initLocalDatabase();
   return db.getAllSync(
-    `SELECT msg_id AS msgId, room_id AS roomId, sender_username, target_username, content, media_url, media_type, COALESCE(sent_at, timestamp) AS timestamp FROM messages WHERE room_id = ? ORDER BY COALESCE(sent_at, timestamp) ASC, id ASC`,
+    // 🟢 FIX: Expose 'status' to the UI
+    `SELECT msg_id AS msgId, room_id AS roomId, sender_username, target_username, content, media_url, media_type, status, COALESCE(sent_at, timestamp) AS timestamp FROM messages WHERE room_id = ? ORDER BY COALESCE(sent_at, timestamp) ASC, id ASC`,
     [roomId]
   );
 };
@@ -199,7 +237,10 @@ export const getRecentConversations = (activeUsername: string) => {
 
       let targetUser = '';
 
-      if (sender && stored) {
+      // 🟢 FIX: Route "system" messages correctly so cleared chats don't disappear
+      if (sender === 'system') {
+        targetUser = stored;
+      } else if (sender && stored) {
         if (sender === me) targetUser = stored;
         else if (stored === me) targetUser = sender;
         else continue;
@@ -211,11 +252,11 @@ export const getRecentConversations = (activeUsername: string) => {
         if (!targetUser) continue;
       }
 
-      // 🟢 SILENT FILTER: Do not show blocked users in the inbox
       if (isUserBlocked(targetUser)) continue;
 
       seen.add(row.roomId);
       result.push({
+        
         roomId: row.roomId,
         targetUser,
         lastMessage: row.media_type ? '📎 Attachment' : row.lastMessage,

@@ -267,7 +267,12 @@ const sanitizeError = (err: any) => {
               <TouchableOpacity style={styles.primaryButton} onPress={executePrimaryAction}>
                 {loading ? <ActivityIndicator color="#666666"/> : <Text style={styles.primaryBtnText}>{currentMode === 'LOGIN' ? 'LOGIN' : currentMode === 'REGISTER' ? 'REGISTER' : 'SEND RESET CODE'}</Text>}
               </TouchableOpacity>
-
+              <View style={{ marginTop: 20 }}>
+                <Text style={{ color: '#404040', fontSize: 9, textAlign: 'center', lineHeight: 14, fontWeight: '600' }}>
+                  By continuing, you agree to our Terms of Service and Privacy Policy. 
+                  We have zero tolerance for objectionable content or abusive users.
+                </Text>
+              </View>
               <View style={styles.toggleRow}>
                 {currentMode === 'LOGIN' ? (
                   <>

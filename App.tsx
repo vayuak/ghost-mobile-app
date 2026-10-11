@@ -24,7 +24,6 @@ const HTTPS_URL = process.env.EXPO_PUBLIC_API_BASE_URL || 'https://sandbag-sterl
 
 const Stack = createNativeStackNavigator();
 
-// 🟢 THIS IS THE CRITICAL DEEP LINKING CONFIGURATION
 const linking: any = {
   prefixes: [
     Linking.createURL('/'), 
@@ -74,6 +73,7 @@ const toastConfig = {
 export default function App() {
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(false);
   const [isInitializing, setIsInitializing] = useState<boolean>(true);
+  const [activeUser, setActiveUser] = useState<string>('');
 
   useEffect(() => {
     const verifySession = async () => {
@@ -83,11 +83,21 @@ export default function App() {
           if (status !== 'granted') {
             await Notifications.requestPermissionsAsync();
           }
+          if (Platform.OS === 'android') {
+            await Notifications.setNotificationChannelAsync('messages', {
+              name: 'Messages', 
+              importance: Notifications.AndroidImportance.HIGH, 
+              sound: 'default',
+            });
+          }
         }
 
         initLocalDatabase();
         const token = await AsyncStorage.getItem('@ghost_token');
-        if (token) {
+        const user = await AsyncStorage.getItem('@active_username');
+        
+        if (token && user) {
+          setActiveUser(user);
           setIsAuthenticated(true);
           await ensureKeysPublished();
         }
@@ -101,6 +111,8 @@ export default function App() {
   }, []);
 
   const handleAuthSuccess = async () => {
+    const user = await AsyncStorage.getItem('@active_username');
+    if (user) setActiveUser(user);
     setIsAuthenticated(true);
     await ensureKeysPublished();
   };
@@ -108,6 +120,7 @@ export default function App() {
   const handleLogoutTrigger = async () => {
     await AsyncStorage.multiRemove(['@ghost_token', '@active_username', '@user_avatar']);
     setIsAuthenticated(false);
+    setActiveUser('');
   };
 
   if (isInitializing) {
@@ -121,8 +134,8 @@ export default function App() {
   return (
     <SafeAreaProvider>
       <NavigationContainer linking={linking}>
-        {isAuthenticated ? (
-          <GlobalNetworkManager>
+        {isAuthenticated && activeUser ? (
+          <GlobalNetworkManager key={activeUser}>
             <Stack.Navigator screenOptions={{ headerShown: false }}>
               <Stack.Screen name="MainTabs">
                 {(props) => <TabNavigator {...props} onLogoutTrigger={handleLogoutTrigger} />}

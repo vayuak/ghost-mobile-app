@@ -5,8 +5,8 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Feather } from '@expo/vector-icons';
 import { apiClient, API_ROUTES, BASE_URL } from '../services/api';
 import { useNetwork } from '../services/GlobalNetworkManager'; 
-import { ensureKeysPublished, encryptForPeer, getPeerPublicKey, acceptPeerKeyChange, KeyChangedError, NoKeyError } from '../services/CryptoVault';
-import { initLocalDatabase, saveLocalMessage, getLocalMessages, markRoomAsRead, clearLocalMessages } from '../services/LocalDB';
+import { ensureKeysPublished, getPeerPublicKey, acceptPeerKeyChange, KeyChangedError, NoKeyError } from '../services/CryptoVault';
+import { initLocalDatabase, saveLocalMessage, getLocalMessages, markRoomAsRead, clearLocalMessages, blockLocalUser, getUnreadIncomingIds, setMessageStatus } from '../services/LocalDB';
 
 export let currentActiveChat = '';
 
@@ -16,7 +16,7 @@ interface MessageItem {
   content: string;
   timestamp: string;
   undecryptable?: boolean;
-  status?: 'sending' | 'failed' | 'sent'; 
+  status?: 'pending' | 'sent' | 'delivered' | 'read' | 'failed'; 
 }
 
 type CryptoState = 'checking' | 'ready' | 'peer-has-no-key' | 'key-changed' | 'error';
@@ -24,7 +24,7 @@ type CryptoState = 'checking' | 'ready' | 'peer-has-no-key' | 'key-changed' | 'e
 export default function GossipsChatScreen({ route, navigation }: any) {
   const targetUser = (route.params?.targetUser || '').replace(/^@/, '').trim().toLowerCase();
   const insets = useSafeAreaInsets();
-  const { sendStompMessage } = useNetwork(); 
+  const { kickOutbox, resync, sendReceipt } = useNetwork(); 
 
   const [messages, setMessages] = useState<MessageItem[]>([]);
   const [chatInput, setChatInput] = useState('');
@@ -33,8 +33,7 @@ export default function GossipsChatScreen({ route, navigation }: any) {
 
   const [cryptoState, setCryptoState] = useState<CryptoState>('checking');
   const [lastError, setLastError] = useState<string | null>(null);
-  
-  // 🟢 Manual Android Keyboard Measurement
+
   const [keyboardHeight, setKeyboardHeight] = useState(0);
 
   const roomIdRef = useRef<string>('');
@@ -60,7 +59,8 @@ export default function GossipsChatScreen({ route, navigation }: any) {
       };
     }
   }, []);
-useEffect(() => {
+
+  useEffect(() => {
     let isMounted = true;
     currentActiveChat = targetUser; 
 
@@ -74,10 +74,9 @@ useEffect(() => {
         setActiveUser(me);
         activeUserRef.current = me;
         roomIdRef.current = [me, targetUser].sort().join('_');
-        
+
         loadLocalHistory(roomIdRef.current);
 
-        // 🟢 FIX: Route through /v1/ Gateway using API_ROUTES dictionary
         apiClient.get(API_ROUTES.SOCIAL.USER_PROFILE(targetUser)).then(res => {
             if (isMounted && (res?.avatarUrl || res?.profilePictureUrl)) {
                 const rawAvatar = res.avatarUrl || res.profilePictureUrl;
@@ -107,7 +106,6 @@ useEffect(() => {
     const dbSub = DeviceEventEmitter.addListener('db_chats_updated', () => {
       if (roomIdRef.current) {
         loadLocalHistory(roomIdRef.current);
-        scrollToEnd(true);
       }
     });
 
@@ -118,66 +116,55 @@ useEffect(() => {
     };
   }, [targetUser]);
 
+  // 🟢 FIX: Relies purely on LocalDB and emits "Read" receipts automatically
   const loadLocalHistory = (roomId: string) => {
     try {
-      markRoomAsRead(roomId); 
-      const history = getLocalMessages(roomId);
-      setMessages((current) => {
-        const dbMsgs = Array.isArray(history) ? (history as MessageItem[]) : [];
-        const pendingMsgs = current.filter(m => m.status === 'sending' || m.status === 'failed');
-        const pendingNotSaved = pendingMsgs.filter(p => !dbMsgs.some(d => d.msgId === p.msgId));
-        return [...dbMsgs, ...pendingNotSaved];
-      });
+      const unread = getUnreadIncomingIds(roomId, activeUserRef.current);
+      if (unread.length) sendReceipt(targetUser, unread, 'read'); 
+      markRoomAsRead(roomId);
+      setMessages(getLocalMessages(roomId) as MessageItem[]);
       scrollToEnd(false);
-    } catch (e: any) {
+    } catch (e) {
       setMessages([]);
     }
   };
 
-  const processAndSend = async (plainTextPayload: string, clientMsgId: string, sentAt: string) => {
-    const roomId = roomIdRef.current;
-    try {
-      const envelope = await encryptForPeer(plainTextPayload, targetUser);
-      sendStompMessage('/app/shadow/send', {
-        v: envelope.v,
-        msgId: clientMsgId,
-        roomId,
-        senderUsername: activeUserRef.current,
-        targetUsername: targetUser,
-        sentAt,
-        ephemeralPublicKey: envelope.senderPublicKey,
-        ciphertext: envelope.ciphertext,
-        iv: envelope.iv,
-      });
-
-      saveLocalMessage(roomId, activeUserRef.current, plainTextPayload, null, null, targetUser, clientMsgId, sentAt, false, true);
-      markRoomAsRead(roomId);
-    } catch (e: any) {
-      if (e instanceof KeyChangedError) setCryptoState('key-changed');
-      else if (e instanceof NoKeyError) setCryptoState('peer-has-no-key');
-      setMessages((prev) => prev.map(m => m.msgId === clientMsgId ? { ...m, status: 'failed' } : m));
-      Alert.alert('Could not send', e?.message || 'Encryption failed.');
-    }
-  };
-
-  const handleSend = async () => {
+  // 🟢 FIX: Uses Outbox pattern rather than manual optimistic merging
+  const handleSend = () => {
     const text = chatInput.trim();
     if (!text) return;
-    
-    if (cryptoState !== 'ready') {
-      Alert.alert('Cannot encrypt', 'Encryption keys are not ready for this conversation.');
-      return;
+    if (cryptoState !== 'ready') { 
+      Alert.alert('Cannot encrypt', 'Encryption keys are not ready for this conversation.'); 
+      return; 
     }
+    
+    setChatInput('');
+    const msgId = `${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
+    
+    saveLocalMessage(roomIdRef.current, activeUserRef.current, text, null, null, targetUser, msgId, new Date().toISOString(), false, true, 'pending');
+    kickOutbox(); 
+  };
 
-    setChatInput(''); 
-    const clientMsgId = `${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
-    const sentAt = new Date().toISOString();
-
-    const optimisticMsg: MessageItem = { msgId: clientMsgId, sender_username: activeUserRef.current, content: text, timestamp: sentAt, status: 'sending' };
-    setMessages((prev) => [...prev, optimisticMsg]);
-    scrollToEnd(true);
-
-    processAndSend(text, clientMsgId, sentAt);
+  const handleChatOptions = () => {
+    Alert.alert('Chat Options', `Manage conversation with @${targetUser}`, [
+      { text: 'Clear Chat', onPress: () => {
+          clearLocalMessages(roomIdRef.current, true, targetUser, activeUserRef.current);
+          setMessages([]);
+      }},
+      { text: 'Delete Chat', style: 'destructive', onPress: () => {
+          clearLocalMessages(roomIdRef.current, false);
+          navigation.navigate('MainTabs', { screen: 'Gossips' });
+      }},
+      { text: 'Block User', style: 'destructive', onPress: () => {
+          blockLocalUser(targetUser);
+          navigation.navigate('MainTabs', { screen: 'Gossips' });
+      }},
+      { text: 'Report User', onPress: () => {
+          apiClient.post('/v1/social/moderation/report', { targetUser, type: 'USER_REPORT' }).catch(()=>{});
+          Alert.alert('Reported', 'User has been reported for review.');
+      }},
+      { text: 'Cancel', style: 'cancel' }
+    ]);
   };
 
   const formatTime = (iso: string) => {
@@ -201,19 +188,43 @@ useEffect(() => {
           messages.map((item, i) => {
             const isMe = (item.sender_username || '').trim().toLowerCase() === activeUser;
             return (
-              <View key={item.msgId || i.toString()} style={[styles.row, isMe ? styles.rowMine : styles.rowTheirs]}>
+              <TouchableOpacity 
+                key={item.msgId || i.toString()} 
+                style={[styles.row, isMe ? styles.rowMine : styles.rowTheirs]}
+                activeOpacity={1}
+                // 🟢 FIX: Allow manual retry of failed outbox messages
+                onLongPress={() => {
+                  if (isMe && item.status === 'failed' && item.msgId) {
+                    setMessageStatus(item.msgId, 'pending');
+                    kickOutbox();
+                  }
+                }}
+              >
                 <View style={[styles.bubble, isMe ? styles.bubbleMine : styles.bubbleTheirs]}>
                   <Text style={styles.bubbleText}>{item.content}</Text>
                   <View style={{ flexDirection: 'row', justifyContent: 'flex-end', alignItems: 'center', marginTop: 3 }}>
                     <Text style={styles.time}>{formatTime(item.timestamp)}</Text>
-                    {isMe && item.status === 'sending' && <Feather name="clock" size={10} color="rgba(255,255,255,0.4)" style={{ marginLeft: 4 }} />}
+                    {/* 🟢 FIX: WhatsApp Style Message Ticks */}
+                    {isMe && (
+                      <Text style={{ fontSize: 10, marginLeft: 4, color: item.status === 'read' ? '#34B7F1' : item.status === 'failed' ? '#FF4444' : 'rgba(255,255,255,0.4)' }}>
+                        {item.status === 'pending' ? '🕓' : item.status === 'sent' ? '✓' : (item.status === 'delivered' || item.status === 'read') ? '✓✓' : item.status === 'failed' ? '!' : ''}
+                      </Text>
+                    )}
                   </View>
                 </View>
-              </View>
+              </TouchableOpacity>
             );
           })
         )}
       </ScrollView>
+      
+      {/* 🟢 FIX: Key Change Banner to accept new security keys */}
+      {cryptoState === 'key-changed' && (
+        <TouchableOpacity onPress={async () => { await acceptPeerKeyChange(targetUser); setCryptoState('ready'); resync(); }}
+          style={{ padding: 10, backgroundColor: '#332701' }}>
+          <Text style={{ color: '#FBBF24', textAlign: 'center' }}>@{targetUser}'s security code changed. Tap to accept.</Text>
+        </TouchableOpacity>
+      )}
 
       <View style={[styles.composer, { paddingBottom: Math.max(insets.bottom, 10) }]}>
         <TextInput style={styles.input} value={chatInput} onChangeText={setChatInput} placeholder={`Message @${targetUser}…`} placeholderTextColor="#666666" multiline />
@@ -240,9 +251,11 @@ useEffect(() => {
             </View>
           </View>
         </View>
+        <TouchableOpacity onPress={handleChatOptions} hitSlop={{ top: 15, bottom: 15, left: 15, right: 15 }}>
+          <Feather name="more-vertical" size={20} color="#FFFFFF" />
+        </TouchableOpacity>
       </View>
 
-      {/* 🟢 Platform-Specific Keyboard Wrapper */}
       {Platform.OS === 'ios' ? (
         <KeyboardAvoidingView style={{ flex: 1 }} behavior="padding">
           {chatContent}

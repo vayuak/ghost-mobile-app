@@ -33,6 +33,9 @@ export default function PostCard({ post, currentUsername: propUsername, onDelete
   const [shieldKey, setShieldKey] = useState<string>('PermanentSecret999');
   
   const [activeUsername, setActiveUsername] = useState<string | undefined>(propUsername);
+  
+  // 🟢 NEW: Local state to instantly hide the post when reported
+  const [isHidden, setIsHidden] = useState(false);
 
   useEffect(() => {
     setVotes(parseNumeric(post.score ?? post.upvotes));
@@ -47,7 +50,12 @@ export default function PostCard({ post, currentUsername: propUsername, onDelete
     } else {
       setActiveUsername(propUsername);
     }
-  }, [propUsername]);
+
+    // 🟢 Check if we already reported this post in a previous session
+    AsyncStorage.getItem(`@hidden_post_${post.id}`).then(val => {
+      if (val === 'true') setIsHidden(true);
+    });
+  }, [propUsername, post.id]);
 
   const mediaUrl = post.mediaUrl || post.imageUrl;
   const mediaType = (post.mediaType || '').toUpperCase();
@@ -71,10 +79,10 @@ export default function PostCard({ post, currentUsername: propUsername, onDelete
 
   useEffect(() => {
     if (isVideo && player) {
-      if (isVisible) player.play();
+      if (isVisible && !isHidden) player.play();
       else player.pause();
     }
-  }, [isVisible, isVideo, player]);
+  }, [isVisible, isHidden, isVideo, player]);
 
   const handleVote = async (direction: 'up' | 'down') => {
     if (isVoting) return;
@@ -107,7 +115,6 @@ export default function PostCard({ post, currentUsername: propUsername, onDelete
         title: post.title || 'GhostShield Post'
       });
 
-      // 🟢 FIX: Routed through /v1/ Gateway
       apiClient.post(`/v1/social/post/${post.id}/share`).catch(() => {});
     } catch (error) { 
       console.warn("Share logic failed", error); 
@@ -125,6 +132,21 @@ export default function PostCard({ post, currentUsername: propUsername, onDelete
     ]);
   };
 
+  // 🟢 NEW: Report logic specifically for PostCard
+  const handleReportPost = () => {
+    Alert.alert('Report Post', 'Flag this content for review?', [
+      { text: 'Report', style: 'destructive', onPress: async () => {
+          // Send to moderation API
+          apiClient.post('/v1/social/moderation/report', { targetId: post.id, type: 'POST_REPORT' }).catch(()=>{});
+          // Hide locally
+          await AsyncStorage.setItem(`@hidden_post_${post.id}`, 'true');
+          setIsHidden(true);
+          Alert.alert('Reported', 'Post hidden and flagged.');
+      }},
+      { text: 'Cancel', style: 'cancel' }
+    ]);
+  };
+
   const renderAvatar = (url: string | null, fallbackUsername: string) => {
     if (url) {
       const formattedUrl = url.startsWith('http') ? url : `${BASE_URL}${url}`;
@@ -132,6 +154,9 @@ export default function PostCard({ post, currentUsername: propUsername, onDelete
     }
     return <Text style={styles.avatarLetter}>{fallbackUsername[0]?.toUpperCase() || 'U'}</Text>;
   };
+
+  // 🟢 Instantly unmount if the user reported this
+  if (isHidden) return null;
 
   return (
     <View style={styles.card}>
@@ -141,11 +166,20 @@ export default function PostCard({ post, currentUsername: propUsername, onDelete
           <Text style={styles.authorName}>@{displayUsername}</Text>
         </TouchableOpacity>
 
-        {isOwner && onDelete && (
-          <TouchableOpacity onPress={handleDeleteTrigger} style={styles.deleteBtn} hitSlop={{ top: 15, bottom: 15, left: 15, right: 15 }}>
-            <Feather name="trash-2" size={16} color="#FF4444" />
-          </TouchableOpacity>
-        )}
+        <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+          {isOwner && onDelete && (
+            <TouchableOpacity onPress={handleDeleteTrigger} style={styles.deleteBtn} hitSlop={{ top: 15, bottom: 15, left: 15, right: 15 }}>
+              <Feather name="trash-2" size={16} color="#FF4444" />
+            </TouchableOpacity>
+          )}
+          
+          {/* 🟢 NEW: UGC Report Menu */}
+          {!isOwner && (
+            <TouchableOpacity onPress={handleReportPost} style={{ padding: 8, marginLeft: 8 }} hitSlop={{ top: 15, bottom: 15, left: 15, right: 15 }}>
+              <Feather name="more-horizontal" size={18} color="#666" />
+            </TouchableOpacity>
+          )}
+        </View>
       </View>
 
       {post.title ? <Text style={styles.postTitle}>{post.title}</Text> : null}
