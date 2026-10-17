@@ -1,6 +1,6 @@
 {
   "expo": {
-    "name": "Glider",
+    "name": "ViaCustos",
     "slug": "GhostShieldMobile",
     "version": "1.0.0",
     "scheme": "glider",
@@ -10,27 +10,27 @@
     "ios": {
       "supportsTablet": true
     },
-    "android": {
-      "package": "com.azymarch.glider",
-      "versionCode": 1, 
-      "adaptiveIcon": {
-        "backgroundColor": "#000000",
-        "foregroundImage": "./assets/android-icon-foreground.png"
-      },
-      "softwareKeyboardLayoutMode": "resize",
-      "predictiveBackGestureEnabled": false,
-      "intentFilters": [
-        {
-          "action": "VIEW",
-          "autoVerify": true,
-          "data": [
-            { "scheme": "https", "host": "sandbag-sterling-leggings.ngrok-free.dev", "pathPrefix": "/" },
-            { "scheme": "http", "host": "sandbag-sterling-leggings.ngrok-free.dev", "pathPrefix": "/" }
-          ],
-          "category": ["BROWSABLE", "DEFAULT"]
-        }
-      ]
+  "android": {
+    "package": "com.azymarch.ViaCustos",
+    "versionCode": 1, 
+    "adaptiveIcon": {
+    "backgroundColor": "#000000",
+    "foregroundImage": "./assets/android-icon-foreground.png"
     },
+    "softwareKeyboardLayoutMode": "resize",
+    "predictiveBackGestureEnabled": false,
+    "intentFilters": [
+    {
+      "action": "VIEW",
+      "autoVerify": true,
+      "data": [
+        { "scheme": "https", "host": "letdown-citric-dividable.ngrok-free.dev", "pathPrefix": "/" },
+        { "scheme": "http", "host": "letdown-citric-dividable.ngrok-free.dev", "pathPrefix": "/" }
+      ],
+      "category": ["BROWSABLE", "DEFAULT"]
+    }
+    ]
+  },
     "web": { "favicon": "./assets/favicon.png" },
     "plugins": [
       "expo-video",

@@ -3,47 +3,38 @@ import { StyleSheet, Text, View, TouchableOpacity, FlatList, Image, ActivityIndi
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Feather } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { useIsFocused } from '@react-navigation/native'; 
 import { apiClient, BASE_URL } from '../services/api';
 import PostCard from '../components/PostCard';
 
 export default function PublicProfileScreen({ route, navigation }: any) {
   const { targetUser } = route.params;
-  // 🟢 FIX: Declare cleanHandle globally at component scope so both API and buttons use it
   const cleanHandle = (targetUser || '').replace(/^@/, '').trim().toLowerCase();
+  
+  const isFocused = useIsFocused(); 
+  const flatListRef = useRef<FlatList>(null); // 🟢 NEW
 
   const [userProfile, setUserProfile] = useState<any>(null);
   const [userPosts, setUserPosts] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [authToken, setAuthToken] = useState<string | null>(null);
   const [visiblePosts, setVisiblePosts] = useState<string[]>([]);
-  
   const [activeUser, setActiveUser] = useState('');
 
   const viewabilityConfig = useRef({ itemVisiblePercentThreshold: 50 }).current;
-  const onViewableItemsChanged = useRef(({ viewableItems }: any) => {
-    setVisiblePosts(viewableItems.map((v: any) => String(v.item.id)));
-  }).current;
+  const onViewableItemsChanged = useRef(({ viewableItems }: any) => { setVisiblePosts(viewableItems.map((v: any) => String(v.item.id))); }).current;
 
-  useEffect(() => {
-    AsyncStorage.getItem('@active_username').then(user => {
-      if (user) setActiveUser(user.toLowerCase());
-    });
-  }, []);
+  useEffect(() => { AsyncStorage.getItem('@active_username').then(user => { if (user) setActiveUser(user.toLowerCase()); }); }, []);
 
   useEffect(() => {
     const fetchData = async () => {
       const token = await AsyncStorage.getItem('@ghost_token');
       setAuthToken(token);
-
       try {
         const response = await apiClient.get(`/v1/social/user/${encodeURIComponent(cleanHandle)}/full-profile`);
         setUserProfile(response.profile);
         setUserPosts(response.posts || []);
-      } catch (error) {
-        console.warn("Failed to load public profile:", error);
-      } finally {
-        setIsLoading(false);
-      }
+      } catch (error) {} finally { setIsLoading(false); }
     };
     fetchData();
   }, [cleanHandle]);
@@ -60,10 +51,10 @@ export default function PublicProfileScreen({ route, navigation }: any) {
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
       <View style={styles.topNav}>
-        <TouchableOpacity onPress={() => navigation.goBack()} hitSlop={{ top: 15, bottom: 15, left: 15, right: 15 }}>
-          <Feather name="arrow-left" size={24} color="#FFF" />
+        <TouchableOpacity onPress={() => navigation.goBack()} hitSlop={{ top: 15, bottom: 15, left: 15, right: 15 }}><Feather name="arrow-left" size={24} color="#FFF" /></TouchableOpacity>
+        <TouchableOpacity onPress={() => flatListRef.current?.scrollToOffset({ offset: 0, animated: true })}>
+          <Text style={styles.brandTitle}>@{cleanHandle}</Text>
         </TouchableOpacity>
-        <Text style={styles.brandTitle}>@{cleanHandle}</Text>
         <View style={{ width: 24 }} />
       </View>
 
@@ -71,6 +62,7 @@ export default function PublicProfileScreen({ route, navigation }: any) {
         <ActivityIndicator size="large" color="#666" style={{ marginTop: 50 }} />
       ) : (
         <FlatList
+          ref={flatListRef}
           data={userPosts}
           keyExtractor={(item, index) => item.id ? item.id.toString() : index.toString()}
           contentContainerStyle={{ paddingBottom: 40 }}
@@ -79,34 +71,18 @@ export default function PublicProfileScreen({ route, navigation }: any) {
           ListHeaderComponent={
             <View style={styles.profileHeaderContainer}>
               <View style={styles.avatarGlow}>
-                {fullAvatarUrl ? (
-                  <Image source={{ uri: fullAvatarUrl, headers: authToken ? { Authorization: `Bearer ${authToken}` } : undefined }} style={styles.avatarImage} />
-                ) : (
-                  <Feather name="user" size={48} color="#4A5060" />
-                )}
+                {fullAvatarUrl ? <Image source={{ uri: fullAvatarUrl, headers: authToken ? { Authorization: `Bearer ${authToken}` } : undefined }} style={styles.avatarImage} /> : <Feather name="user" size={48} color="#4A5060" />}
               </View>
-
               <Text style={styles.usernameText}>@{cleanHandle}</Text>
-
               {!isSelf && (
-                <TouchableOpacity 
-                   style={styles.messageBtn} 
-                   // 🟢 FIX: Safe navigation passing cleanHandle (strips @ symbol)
-                   onPress={() => navigation.navigate('GossipsChat', { targetUser: cleanHandle })}
-                >
-                  <Feather name="message-circle" size={16} color="#000" style={{ marginRight: 8 }} />
-                  <Text style={styles.messageBtnText}>Message</Text>
+                <TouchableOpacity style={styles.messageBtn} onPress={() => navigation.navigate('GossipsChat', { targetUser: cleanHandle })}>
+                  <Feather name="message-circle" size={16} color="#000" style={{ marginRight: 8 }} /><Text style={styles.messageBtnText}>Message</Text>
                 </TouchableOpacity>
               )}
-
-              <View style={styles.sectionHeader}>
-                <Text style={styles.sectionTitle}>POSTS</Text>
-              </View>
+              <View style={styles.sectionHeader}><Text style={styles.sectionTitle}>POSTS</Text></View>
             </View>
           }
-          renderItem={({ item }) => (
-            <PostCard post={item} isVisible={visiblePosts.includes(String(item.id))} />
-          )}
+          renderItem={({ item }) => <PostCard post={item} isVisible={visiblePosts.includes(String(item.id)) && isFocused} />}
           ListEmptyComponent={<Text style={{ color: '#666', textAlign: 'center', marginTop: 30 }}>No posts yet.</Text>}
         />
       )}

@@ -1,12 +1,13 @@
 import React, { useState, useEffect } from 'react';
 import { Text, View, TextInput, TouchableOpacity, ActivityIndicator, KeyboardAvoidingView, Platform, ScrollView, StyleSheet, BackHandler, Linking, Alert } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import * as SecureStore from 'expo-secure-store'; 
 import { Feather } from '@expo/vector-icons';
 import { apiClient, API_ROUTES } from '../services/api';
 import { initializeDeviceKeys } from '../services/CryptoVault';
+import { lightTheme as colors } from '../context/ThemeContext'; // 🟢 FORCED LIGHT THEME
 
 export default function AuthScreen({ onAuthSuccess }: { onAuthSuccess: () => void }) {
+  const styles = getStyles(colors);
   const [currentMode, setCurrentMode] = useState<'LOGIN' | 'REGISTER' | 'FORGOT_PASSWORD'>('LOGIN');
   const [workflowStep, setWorkflowStep] = useState<1 | 2>(1); 
   const [loading, setLoading] = useState(false);
@@ -23,91 +24,46 @@ export default function AuthScreen({ onAuthSuccess }: { onAuthSuccess: () => voi
 
   useEffect(() => {
     const backAction = () => {
-      if (workflowStep === 2) {
-        setWorkflowStep(1);
-        return true; 
-      }
-      if (currentMode !== 'LOGIN') {
-        setCurrentMode('LOGIN');
-        setUiMessage(null);
-        return true;
-      }
+      if (workflowStep === 2) { setWorkflowStep(1); return true; }
+      if (currentMode !== 'LOGIN') { setCurrentMode('LOGIN'); setUiMessage(null); return true; }
       return false; 
     };
-
     const backHandler = BackHandler.addEventListener('hardwareBackPress', backAction);
     return () => backHandler.remove();
   }, [currentMode, workflowStep]);
 
   useEffect(() => {
-    if (currentMode !== 'REGISTER' || username.length < 3) {
-      setUsernameStatus(null);
-      return;
-    }
+    if (currentMode !== 'REGISTER' || username.length < 3) { setUsernameStatus(null); return; }
     const checkUsername = async () => {
       try {
         const res = await apiClient.get(`${API_ROUTES.AUTH.CHECK_USERNAME}?username=${username}`);
         setUsernameStatus(res.available ? 'AVAILABLE' : 'TAKEN');
-      } catch (e) {
-        setUsernameStatus(null);
-      }
+      } catch (e) { setUsernameStatus(null); }
     };
     const delayDebounceFn = setTimeout(() => checkUsername(), 500);
     return () => clearTimeout(delayDebounceFn);
   }, [username, currentMode]);
 
-  const isValidEmail = (email: string) => {
-    const strictEmailRegex = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/;
-    return strictEmailRegex.test(email);
-  };
-
-  const isStrongPassword = (pass: string) => {
-    return pass.length >= 8 && /[A-Z]/.test(pass) && /[0-9]/.test(pass) && /[^A-Za-z0-9]/.test(pass);
-  };
+  const isValidEmail = (email: string) => /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/.test(email);
+  const isStrongPassword = (pass: string) => pass.length >= 8 && /[A-Z]/.test(pass) && /[0-9]/.test(pass) && /[^A-Za-z0-9]/.test(pass);
 
   const sanitizeError = (err: any) => {
-    if (err?.response?.data && typeof err.response.data === 'object' && !err.response.data.error) {
-       const firstErrorKey = Object.keys(err.response.data)[0];
-       return err.response.data[firstErrorKey] || 'Invalid input provided.';
-    }
-
+    if (err?.response?.data && typeof err.response.data === 'object' && !err.response.data.error) return err.response.data[Object.keys(err.response.data)[0]] || 'Invalid input.';
     const msg = err?.message?.toLowerCase() || err?.response?.data?.error?.toLowerCase() || '';
-    
-    if (msg.includes('suspended') || msg.includes('blocked') || msg.includes('banned') || msg.includes('disabled')) {
-      return 'Your account has been suspended due to multiple community reports. Please contact support at badger.developer.001@gmail.com for assistance.';
-    }
-
-    if (msg.includes('incorrect email') || msg.includes('invalid identity') || msg.includes('bad credentials')) return 'Incorrect email or password. Please try again or register.';
-    if (msg.includes('contact method') || msg.includes('platform footprint')) return 'This email is already registered. Please return to login.';
-    if (msg.includes('identity signature') || msg.includes('infrastructure')) return 'This username is already taken. Please choose another.';
-    if (msg.includes('processing active') || msg.includes('handshake protocol')) return 'A verification code was recently sent to this email. Please wait 10 minutes before trying again.';
-    if (msg.includes('staging window lost')) return 'Your verification session expired. Please register again.';
-    if (msg.includes('too many invalid attempts')) return 'Too many invalid attempts. Please request a new code.';
-    if (msg.includes('no active registration handshake')) return 'Verification failed. The code may have expired, or you need to restart the app.';
-    if (msg.includes('not found') || msg.includes('404')) return 'We could not find an account with that email.';
-    if (msg.includes('network') || msg.includes('timeout')) return 'Network error. Please check your internet connection.';
-    if (msg.includes('deliver') || msg.includes('smtp') || msg.includes('connection refused')) return 'We could not deliver the email. Please check if the address is typed correctly.';
-    if (msg.includes('500') || msg.includes('internal')) return 'Something went wrong on our end. Please try again later.';
-    
-    return err?.response?.data?.error || err?.message || 'An unexpected error occurred. Please try again.';
+    if (msg.includes('suspended') || msg.includes('blocked')) return 'Your account has been suspended. Please contact support.';
+    if (msg.includes('incorrect') || msg.includes('bad credentials')) return 'Incorrect email or password.';
+    if (msg.includes('contact method')) return 'Email already registered. Return to login.';
+    if (msg.includes('identity signature')) return 'Username is already taken.';
+    return err?.response?.data?.error || err?.message || 'An unexpected error occurred.';
   };
 
   const validateInput = () => {
-    if (currentMode === 'REGISTER' || currentMode === 'FORGOT_PASSWORD') {
-      if (!isValidEmail(contactId.trim())) {
-        setUiMessage({ text: 'Please enter a valid email address (e.g., name@domain.com).', type: 'error' });
-        return false;
-      }
+    if ((currentMode === 'REGISTER' || currentMode === 'FORGOT_PASSWORD') && !isValidEmail(contactId.trim())) {
+      setUiMessage({ text: 'Please enter a valid email address.', type: 'error' }); return false;
     }
     if (currentMode === 'REGISTER') {
-      if (!isStrongPassword(password)) {
-        setUiMessage({ text: 'Password must be at least 8 characters and include 1 uppercase letter, 1 number, and 1 special character.', type: 'error' });
-        return false;
-      }
-      if (usernameStatus === 'TAKEN') {
-        setUiMessage({ text: 'Username is already taken.', type: 'error' });
-        return false;
-      }
+      if (!isStrongPassword(password)) { setUiMessage({ text: 'Password needs 8+ chars, 1 uppercase, 1 number, 1 special character.', type: 'error' }); return false; }
+      if (usernameStatus === 'TAKEN') { setUiMessage({ text: 'Username is taken.', type: 'error' }); return false; }
     }
     return true;
   };
@@ -119,38 +75,24 @@ export default function AuthScreen({ onAuthSuccess }: { onAuthSuccess: () => voi
     try {
       const res = await apiClient.post(API_ROUTES.AUTH.LOGIN, { identifier: contactId.trim(), password });
       const jwtToken = res.jwt || res.token;
-      
       if (jwtToken) {
         await AsyncStorage.setItem('@ghost_token', jwtToken);
-        
         try {
           const meRes = await apiClient.get(API_ROUTES.AUTH.ME);
-          const trueUsername = meRes.username.trim().toLowerCase();
-          await AsyncStorage.setItem('@active_username', trueUsername);
+          await AsyncStorage.setItem('@active_username', meRes.username.trim().toLowerCase());
         } catch (meError) {
           const fallback = contactId.includes('@') ? contactId.split('@')[0] : contactId;
           await AsyncStorage.setItem('@active_username', fallback.toLowerCase().trim());
         }
-        
         onAuthSuccess(); 
       }
-    } catch (err: any) { 
-      setUiMessage({ text: sanitizeError(err), type: 'error' }); 
-    } finally { setLoading(false); }
+    } catch (err: any) { setUiMessage({ text: sanitizeError(err), type: 'error' }); } 
+    finally { setLoading(false); }
   };
 
   const handleRegister = async () => {
     setUiMessage(null);
-    
-    // 🟢 ENFORCEMENT: Block API call if consent is not given
-    if (!hasConsented) {
-      Alert.alert(
-        "Consent Required", 
-        "You must agree to the Terms of Service and Privacy Policy to create an account and access community features."
-      );
-      return;
-    }
-
+    if (!hasConsented) return Alert.alert("Consent Required", "You must agree to the Terms of Service.");
     if (!username || !password || !contactId) return setUiMessage({ text: 'All fields are mandatory.', type: 'error' });
     if (!validateInput()) return;
     
@@ -158,68 +100,42 @@ export default function AuthScreen({ onAuthSuccess }: { onAuthSuccess: () => voi
     try {
       const cleanUsername = username.toLowerCase().trim();
       const realPublicKey = await initializeDeviceKeys(cleanUsername);
-
-      await apiClient.post(API_ROUTES.AUTH.REGISTER, { 
-        username: cleanUsername, 
-        password, 
-        contactIdentifier: contactId.trim(),
-        publicKey: realPublicKey 
-      });
-      
+      await apiClient.post(API_ROUTES.AUTH.REGISTER, { username: cleanUsername, password, contactIdentifier: contactId.trim(), publicKey: realPublicKey });
       setUiMessage({ text: `Verification code sent to ${contactId.trim()}`, type: 'success' }); 
       setWorkflowStep(2); 
-    } catch (err: any) { 
-      setUiMessage({ text: sanitizeError(err), type: 'error' }); 
-    } finally { setLoading(false); }
+    } catch (err: any) { setUiMessage({ text: sanitizeError(err), type: 'error' }); } 
+    finally { setLoading(false); }
   };
 
   const handleForgotPassword = async () => {
     setUiMessage(null);
     if (!contactId) return setUiMessage({ text: 'Email address is required.', type: 'error' });
     if (!validateInput()) return;
-
     setLoading(true);
     try {
       await apiClient.post(API_ROUTES.AUTH.FORGOT_PASSWORD, { identifier: contactId.trim() });
       setUiMessage({ text: `Recovery code sent to ${contactId.trim()}`, type: 'success' });
       setWorkflowStep(2);
-    } catch (err: any) { 
-      setUiMessage({ text: sanitizeError(err), type: 'error' }); 
-    } finally { setLoading(false); }
+    } catch (err: any) { setUiMessage({ text: sanitizeError(err), type: 'error' }); } 
+    finally { setLoading(false); }
   };
 
   const handleVerifyOtp = async () => {
     setUiMessage(null);
-    if (currentMode === 'FORGOT_PASSWORD' && !isStrongPassword(password)) {
-        return setUiMessage({ text: 'Your new password must be at least 8 characters...', type: 'error' });
-    }
-
+    if (currentMode === 'FORGOT_PASSWORD' && !isStrongPassword(password)) return setUiMessage({ text: 'Your new password must be at least 8 characters...', type: 'error' });
     setLoading(true);
     try {
       if (currentMode === 'FORGOT_PASSWORD') {
-        await apiClient.post(API_ROUTES.AUTH.RESET_PASSWORD, { 
-          identifier: contactId.trim(), 
-          newPassword: password, 
-          otp: otpCode.trim() 
-        });
+        await apiClient.post(API_ROUTES.AUTH.RESET_PASSWORD, { identifier: contactId.trim(), newPassword: password, otp: otpCode.trim() });
         setUiMessage({ text: 'Password reset successful. Returning to login.', type: 'success' });
       } else {
         const cleanTarget = (username || contactId).toLowerCase().trim();
-        await apiClient.post(API_ROUTES.AUTH.VERIFY_OTP, { 
-          username: cleanTarget, 
-          otp: otpCode.trim() 
-        });
+        await apiClient.post(API_ROUTES.AUTH.VERIFY_OTP, { username: cleanTarget, otp: otpCode.trim() });
         setUiMessage({ text: 'Verification complete. You can now login.', type: 'success' });
       }
-      setTimeout(() => {
-        setWorkflowStep(1);
-        setCurrentMode('LOGIN');
-        setPassword('');
-        setOtpCode('');
-      }, 2000);
-    } catch (err: any) { 
-      setUiMessage({ text: sanitizeError(err), type: 'error' }); 
-    } finally { setLoading(false); }
+      setTimeout(() => { setWorkflowStep(1); setCurrentMode('LOGIN'); setPassword(''); setOtpCode(''); }, 2000);
+    } catch (err: any) { setUiMessage({ text: sanitizeError(err), type: 'error' }); } 
+    finally { setLoading(false); }
   };
 
   const executePrimaryAction = () => {
@@ -229,7 +145,7 @@ export default function AuthScreen({ onAuthSuccess }: { onAuthSuccess: () => voi
   };
 
   return (
-    <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={{ flex: 1, backgroundColor: '#000000' }}>
+    <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={{ flex: 1, backgroundColor: colors.background }}>
       <ScrollView contentContainerStyle={styles.container}>
         <Text style={styles.brandTitle}>ViaCustos</Text>
         <Text style={styles.brandSubtitle}>Explore together. Travel safely.</Text>
@@ -242,23 +158,23 @@ export default function AuthScreen({ onAuthSuccess }: { onAuthSuccess: () => voi
                 <>
                   <Text style={styles.label}>Username</Text>
                   <View style={styles.inputWrapper}>
-                    <TextInput style={styles.input} value={username} onChangeText={setUsername} placeholder="username" placeholderTextColor="#404040" autoCapitalize="none"/>
-                    {usernameStatus === 'AVAILABLE' && <Text style={[styles.statusTextRight, { color: '#00C851' }]}>[ √ ]</Text>}
-                    {usernameStatus === 'TAKEN' && <Text style={[styles.statusTextRight, { color: '#FF4444' }]}>[ X ]</Text>}
+                    <TextInput style={styles.input} value={username} onChangeText={setUsername} placeholder="username" placeholderTextColor={colors.textMuted} autoCapitalize="none"/>
+                    {usernameStatus === 'AVAILABLE' && <Text style={[styles.statusTextRight, { color: colors.primary }]}>[ √ ]</Text>}
+                    {usernameStatus === 'TAKEN' && <Text style={[styles.statusTextRight, { color: colors.danger }]}>[ X ]</Text>}
                   </View>
                 </>
               )}
               
               <Text style={styles.label}>{currentMode === 'LOGIN' ? 'Email or Username' : 'Email'}</Text>
-              <TextInput style={styles.input} value={contactId} onChangeText={setContactId} placeholder="email@domain.com" placeholderTextColor="#404040" autoCapitalize="none" keyboardType="email-address"/>
+              <TextInput style={styles.input} value={contactId} onChangeText={setContactId} placeholder="email@domain.com" placeholderTextColor={colors.textMuted} autoCapitalize="none" keyboardType="email-address"/>
 
               {currentMode !== 'FORGOT_PASSWORD' && (
                 <>
                   <Text style={styles.label}>Password</Text>
                   <View style={styles.passwordContainer}>
-                    <TextInput style={styles.passwordInput} value={password} onChangeText={setPassword} placeholder="••••••••" placeholderTextColor="#404040" secureTextEntry={!showPassword} autoCapitalize="none"/>
+                    <TextInput style={styles.passwordInput} value={password} onChangeText={setPassword} placeholder="••••••••" placeholderTextColor={colors.textMuted} secureTextEntry={!showPassword} autoCapitalize="none"/>
                     <TouchableOpacity onPress={() => setShowPassword(!showPassword)} style={styles.eyeIcon}>
-                      <Feather name={showPassword ? "eye" : "eye-off"} size={18} color="#666666" />
+                      <Feather name={showPassword ? "eye" : "eye-off"} size={18} color={colors.textMuted} />
                     </TouchableOpacity>
                   </View>
                 </>
@@ -266,41 +182,23 @@ export default function AuthScreen({ onAuthSuccess }: { onAuthSuccess: () => voi
 
               {uiMessage && (
                 <View style={styles.messageBox}>
-                  <Text style={[styles.messageText, uiMessage.type === 'error' ? { color: '#FF4444' } : { color: '#00C851' }]}>
-                    {uiMessage.text}
-                  </Text>
+                  <Text style={[styles.messageText, uiMessage.type === 'error' ? { color: colors.danger } : { color: colors.primary }]}>{uiMessage.text}</Text>
                 </View>
               )}
 
-              {/* 🟢 CONDITIONAL RENDER: Show Explicit Checkbox for Register, otherwise standard text */}
               {currentMode === 'REGISTER' ? (
-                <TouchableOpacity 
-                  style={styles.consentRow} 
-                  onPress={() => setHasConsented(!hasConsented)}
-                  activeOpacity={0.8}
-                >
-                  <View style={[styles.checkbox, hasConsented && styles.checkboxActive]}>
-                    {hasConsented && <Feather name="check" size={14} color="#000" />}
-                  </View>
-                  <Text style={styles.consentText}>
-                    I have read and agree to the <Text style={styles.linkText} onPress={() => Linking.openURL('https://viacustos.com/terms')}>Terms of Service</Text> and <Text style={styles.linkText} onPress={() => Linking.openURL('https://viacustos.com/privacy')}>Privacy Policy</Text>, including community guidelines on acceptable content.
-                  </Text>
+                <TouchableOpacity style={styles.consentRow} onPress={() => setHasConsented(!hasConsented)} activeOpacity={0.8}>
+                  <View style={[styles.checkbox, hasConsented && styles.checkboxActive]}>{hasConsented && <Feather name="check" size={14} color="#FFF" />}</View>
+                  <Text style={styles.consentText}>I agree to the <Text style={styles.linkText} onPress={() => Linking.openURL('https://viacustos.com/terms')}>Terms</Text> and <Text style={styles.linkText} onPress={() => Linking.openURL('https://viacustos.com/privacy')}>Privacy Policy</Text>.</Text>
                 </TouchableOpacity>
               ) : (
                 <View style={{ marginTop: 20 }}>
-                  <Text style={styles.disclaimerText}>
-                    By continuing, you agree to our Terms of Service and Privacy Policy. 
-                    We have zero tolerance for objectionable content or abusive users.
-                  </Text>
+                  <Text style={styles.disclaimerText}>By continuing, you agree to our Terms of Service and Privacy Policy.</Text>
                 </View>
               )}
 
-              <TouchableOpacity 
-                style={[styles.primaryButton, (currentMode === 'REGISTER' && !hasConsented) && styles.primaryButtonDisabled]} 
-                onPress={executePrimaryAction}
-                disabled={currentMode === 'REGISTER' && !hasConsented}
-              >
-                {loading ? <ActivityIndicator color="#666666"/> : <Text style={styles.primaryBtnText}>{currentMode === 'LOGIN' ? 'LOGIN' : currentMode === 'REGISTER' ? 'REGISTER' : 'SEND RESET CODE'}</Text>}
+              <TouchableOpacity style={[styles.primaryButton, (currentMode === 'REGISTER' && !hasConsented) && styles.primaryButtonDisabled]} onPress={executePrimaryAction} disabled={currentMode === 'REGISTER' && !hasConsented}>
+                {loading ? <ActivityIndicator color="#FFF"/> : <Text style={styles.primaryBtnText}>{currentMode === 'LOGIN' ? 'LOGIN' : currentMode === 'REGISTER' ? 'REGISTER' : 'SEND RESET CODE'}</Text>}
               </TouchableOpacity>
 
               <View style={styles.toggleRow}>
@@ -320,26 +218,18 @@ export default function AuthScreen({ onAuthSuccess }: { onAuthSuccess: () => voi
                 <>
                   <Text style={styles.label}>New Password</Text>
                   <View style={styles.passwordContainer}>
-                    <TextInput style={styles.passwordInput} value={password} onChangeText={setPassword} placeholder="••••••••" placeholderTextColor="#404040" secureTextEntry={!showPassword} autoCapitalize="none"/>
-                    <TouchableOpacity onPress={() => setShowPassword(!showPassword)} style={styles.eyeIcon}>
-                      <Feather name={showPassword ? "eye" : "eye-off"} size={18} color="#666666" />
-                    </TouchableOpacity>
+                    <TextInput style={styles.passwordInput} value={password} onChangeText={setPassword} placeholder="••••••••" placeholderTextColor={colors.textMuted} secureTextEntry={!showPassword} autoCapitalize="none"/>
+                    <TouchableOpacity onPress={() => setShowPassword(!showPassword)} style={styles.eyeIcon}><Feather name={showPassword ? "eye" : "eye-off"} size={18} color={colors.textMuted} /></TouchableOpacity>
                   </View>
                 </>
               )}
               <Text style={styles.label}>6-Digit Verification Code</Text>
-              <TextInput style={[styles.input, { fontSize: 24, letterSpacing: 10, textAlign: 'center', marginTop: 16 }]} value={otpCode} onChangeText={setOtpCode} placeholder="------" placeholderTextColor="#404040" keyboardType="number-pad" maxLength={6}/>
-              
+              <TextInput style={[styles.input, { fontSize: 24, letterSpacing: 10, textAlign: 'center', marginTop: 16 }]} value={otpCode} onChangeText={setOtpCode} placeholder="------" placeholderTextColor={colors.textMuted} keyboardType="number-pad" maxLength={6}/>
               {uiMessage && (
-                <View style={styles.messageBox}>
-                  <Text style={[styles.messageText, uiMessage.type === 'error' ? { color: '#FF4444' } : { color: '#00C851' }]}>
-                    {uiMessage.text}
-                  </Text>
-                </View>
+                <View style={styles.messageBox}><Text style={[styles.messageText, uiMessage.type === 'error' ? { color: colors.danger } : { color: colors.primary }]}>{uiMessage.text}</Text></View>
               )}
-
               <TouchableOpacity style={styles.primaryButton} onPress={handleVerifyOtp}>
-                {loading ? <ActivityIndicator color="#666666"/> : <Text style={styles.primaryBtnText}>VERIFY CODE</Text>}
+                {loading ? <ActivityIndicator color="#FFF"/> : <Text style={styles.primaryBtnText}>VERIFY CODE</Text>}
               </TouchableOpacity>
             </>
           )}
@@ -349,32 +239,30 @@ export default function AuthScreen({ onAuthSuccess }: { onAuthSuccess: () => voi
   );
 }
 
-const styles = StyleSheet.create({
-  container: { flexGrow: 1, backgroundColor: '#000000', padding: 24, justifyContent: 'center' }, 
-  brandTitle: { color: '#666666', fontSize: 28, fontWeight: '900', letterSpacing: 6, textAlign: 'center' },
-  brandSubtitle: { color: '#404040', fontSize: 10, fontWeight: '600', letterSpacing: 8, textAlign: 'center', marginBottom: 40 },
-  card: { backgroundColor: '#1A1A1A', padding: 24, borderWidth: 1, borderColor: '#262626' }, 
-  modeText: { color: '#666666', fontSize: 12, fontWeight: '800', textAlign: 'center', marginBottom: 24, letterSpacing: 2 },
-  label: { color: '#404040', fontSize: 10, fontWeight: '800', marginBottom: 6, marginTop: 16, textTransform: 'uppercase', letterSpacing: 1 },
+const getStyles = (colors: any) => StyleSheet.create({
+  container: { flexGrow: 1, backgroundColor: colors.background, padding: 24, justifyContent: 'center' }, 
+  brandTitle: { color: colors.text, fontSize: 28, fontWeight: '900', letterSpacing: 6, textAlign: 'center' },
+  brandSubtitle: { color: colors.textMuted, fontSize: 10, fontWeight: '600', letterSpacing: 8, textAlign: 'center', marginBottom: 40 },
+  card: { backgroundColor: colors.surface, padding: 24, borderRadius: 12, borderWidth: 1, borderColor: colors.border }, 
+  modeText: { color: colors.textMuted, fontSize: 12, fontWeight: '800', textAlign: 'center', marginBottom: 24, letterSpacing: 2 },
+  label: { color: colors.textMuted, fontSize: 10, fontWeight: '800', marginBottom: 6, marginTop: 16, textTransform: 'uppercase', letterSpacing: 1 },
   inputWrapper: { position: 'relative', justifyContent: 'center' },
   statusTextRight: { position: 'absolute', right: 14, fontWeight: 'bold' },
-  input: { backgroundColor: '#262626', color: '#666666', padding: 14, borderWidth: 1, borderColor: '#404040', fontSize: 14, fontWeight: '600' },
-  passwordContainer: { flexDirection: 'row', alignItems: 'center', borderWidth: 1, borderColor: '#404040', backgroundColor: '#262626' },
-  passwordInput: { flex: 1, padding: 14, color: '#666666', fontSize: 14, fontWeight: '600' },
+  input: { backgroundColor: colors.background, color: colors.text, padding: 14, borderRadius: 8, borderWidth: 1, borderColor: colors.border, fontSize: 14, fontWeight: '600' },
+  passwordContainer: { flexDirection: 'row', alignItems: 'center', borderRadius: 8, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.background },
+  passwordInput: { flex: 1, padding: 14, color: colors.text, fontSize: 14, fontWeight: '600' },
   eyeIcon: { padding: 14 },
-  messageBox: { marginTop: 16, padding: 12, backgroundColor: '#1A1A1A', borderWidth: 1, borderColor: '#404040' },
+  messageBox: { marginTop: 16, padding: 12, backgroundColor: colors.background, borderRadius: 8, borderWidth: 1, borderColor: colors.border },
   messageText: { fontSize: 12, fontWeight: '700', textAlign: 'center' },
-  primaryButton: { backgroundColor: '#262626', padding: 16, marginTop: 24, alignItems: 'center', borderWidth: 1, borderColor: '#404040' },
-  primaryBtnText: { color: '#666666', fontWeight: '900', letterSpacing: 2 },
-  toggleRow: { flexDirection: 'row', justifyContent: 'space-between', marginTop: 30, paddingTop: 20, borderTopWidth: 1, borderTopColor: '#262626' },
-  link: { color: '#666666', fontSize: 11, fontWeight: '800', letterSpacing: 1, textTransform: 'uppercase' },
-  
-  // 🟢 NEW: Consent UI Styles
+  primaryButton: { backgroundColor: colors.text, padding: 16, borderRadius: 8, marginTop: 24, alignItems: 'center' },
+  primaryBtnText: { color: colors.background, fontWeight: '900', letterSpacing: 2 },
+  toggleRow: { flexDirection: 'row', justifyContent: 'space-between', marginTop: 30, paddingTop: 20, borderTopWidth: 1, borderTopColor: colors.border },
+  link: { color: colors.primary, fontSize: 11, fontWeight: '800', letterSpacing: 1, textTransform: 'uppercase' },
   consentRow: { flexDirection: 'row', alignItems: 'flex-start', marginTop: 20, marginBottom: 4 },
-  checkbox: { width: 18, height: 18, borderWidth: 1.5, borderColor: '#666', borderRadius: 4, justifyContent: 'center', alignItems: 'center', marginRight: 12, marginTop: 2 },
-  checkboxActive: { backgroundColor: '#FBBF24', borderColor: '#FBBF24' },
-  consentText: { flex: 1, color: '#666', fontSize: 10, lineHeight: 16, fontWeight: '600' },
-  linkText: { color: '#FBBF24', fontWeight: '700' },
+  checkbox: { width: 18, height: 18, borderWidth: 1.5, borderColor: colors.textMuted, borderRadius: 4, justifyContent: 'center', alignItems: 'center', marginRight: 12, marginTop: 2 },
+  checkboxActive: { backgroundColor: colors.primary, borderColor: colors.primary },
+  consentText: { flex: 1, color: colors.textMuted, fontSize: 10, lineHeight: 16, fontWeight: '600' },
+  linkText: { color: colors.primary, fontWeight: '700' },
   primaryButtonDisabled: { opacity: 0.4 },
-  disclaimerText: { color: '#404040', fontSize: 9, textAlign: 'center', lineHeight: 14, fontWeight: '600', marginBottom: 4 }
+  disclaimerText: { color: colors.textMuted, fontSize: 9, textAlign: 'center', lineHeight: 14, fontWeight: '600', marginBottom: 4 }
 });

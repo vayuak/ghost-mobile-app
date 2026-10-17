@@ -1,36 +1,33 @@
-import React, { useState, useEffect } from 'react';
-import { View, Text, TextInput, TouchableOpacity, FlatList, KeyboardAvoidingView, Platform, ActivityIndicator, Alert, Image, Keyboard } from 'react-native';
-import AsyncStorage from '@react-native-async-storage/async-storage';
-import Toast from 'react-native-toast-message'; 
-import { apiClient, BASE_URL, API_ROUTES } from '../services/api';
+import React, { useState, useEffect, useRef } from 'react';
+import { StyleSheet, Text, View, TextInput, TouchableOpacity, FlatList, KeyboardAvoidingView, Platform, Image, ActivityIndicator, Modal, Keyboard } from 'react-native';
 import { Feather } from '@expo/vector-icons';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
-
-interface Comment {
-  id: number;
-  content: string;
-  username: string;
-  avatarUrl: string | null;
-  parentId: number | null;
-  createdAt: string;
-}
+import { useNavigation } from '@react-navigation/native';
+import { apiClient, BASE_URL, API_ROUTES } from '../services/api';
+import Toast from 'react-native-toast-message';
+import { useTheme } from '../context/ThemeContext'; 
 
 interface CommentsModalProps {
-  postId: number;
+  visible: boolean;
+  postId: string | number;
   currentUsername?: string;
   onClose: () => void;
-  onCommentAdded: () => void;
-  onCommentDeleted: () => void;
+  onCommentAdded?: () => void;
+  onCommentDeleted?: () => void; 
 }
 
-export default function CommentsModal({ postId, currentUsername: propUsername, onClose, onCommentAdded, onCommentDeleted }: CommentsModalProps) {
-  const [comments, setComments] = useState<Comment[]>([]);
-  const [newComment, setNewComment] = useState('');
-  const [replyingTo, setReplyingTo] = useState<Comment | null>(null);
+export default function CommentsModal({ visible, postId, currentUsername, onClose, onCommentAdded, onCommentDeleted }: CommentsModalProps) {
+  const { colors, isDarkMode } = useTheme();
+  const styles = getStyles(colors, isDarkMode);
+  const navigation = useNavigation<any>(); 
+  
+  const [comments, setComments] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
-  const [localUsername, setLocalUsername] = useState<string | null>(propUsername || null);
+  const [newComment, setNewComment] = useState('');
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [replyingTo, setReplyingTo] = useState<any | null>(null);
+  
+  const inputRef = useRef<TextInput>(null);
   const [keyboardHeight, setKeyboardHeight] = useState(0);
-  const insets = useSafeAreaInsets();
 
   useEffect(() => {
     if (Platform.OS === 'android') {
@@ -41,162 +38,121 @@ export default function CommentsModal({ postId, currentUsername: propUsername, o
   }, []);
 
   useEffect(() => {
-    fetchComments();
-    if (!propUsername) {
-      AsyncStorage.getItem('@active_username').then(user => {
-        if (user) setLocalUsername(user.replace(/^@/, '').trim().toLowerCase());
-      });
-    }
-  }, [propUsername]);
-
-  const activeUser = (propUsername || localUsername || '').replace(/^@/, '').trim().toLowerCase();
+    if (visible) { setLoading(true); fetchComments(); }
+  }, [visible, postId]);
 
   const fetchComments = async () => {
     try {
-      const response = await apiClient.get(API_ROUTES.POSTS.GET_COMMENTS(postId, new Date().getTime()));
-      setComments(response.data || response || []); 
-    } catch (error) {
-      console.error("Failed to load comments", error);
-    } finally {
-      setLoading(false);
-    }
+      const data = await apiClient.get(API_ROUTES.POST.GET_COMMENTS(postId, Date.now()));
+      setComments(data || []);
+    } catch (error) { console.warn("Fetch failed"); } 
+    finally { setLoading(false); }
   };
 
-  const handlePostComment = async () => {
-    if (!newComment.trim()) return;
+  const handleSend = async () => {
+    const text = newComment.trim();
+    if (!text || isSubmitting) return;
+
+    setIsSubmitting(true);
     try {
-      const payload = { content: newComment.trim(), parentId: replyingTo ? replyingTo.id : null };
-      await apiClient.post(API_ROUTES.POSTS.CREATE_COMMENT(postId), payload);
+      await apiClient.post(API_ROUTES.POST.CREATE_COMMENT(postId), { content: text, parentId: replyingTo ? replyingTo.id : null });
       setNewComment('');
       setReplyingTo(null);
-      Keyboard.dismiss(); // Cleanly drop keyboard on send
-      fetchComments(); 
-      onCommentAdded(); 
-    } catch (error: any) {
-      Toast.show({ type: 'error', text1: 'Error', text2: "Failed to post comment" });
-    }
+      if (onCommentAdded) onCommentAdded();
+      await fetchComments(); 
+    } catch (error: any) { Toast.show({ type: 'error', text1: 'Failed to post', text2: error.message }); } 
+    finally { setIsSubmitting(false); }
   };
 
-  const executeDelete = async (commentId: number) => {
-    try {
-      await apiClient.delete(API_ROUTES.COMMENTS.DELETE(commentId));
-      setComments(current => current.filter(c => String(c.id) !== String(commentId)));
-      onCommentDeleted(); 
-    } catch (error: any) {
-      Toast.show({ type: 'error', text1: 'Error', text2: "Failed to delete comment" });
-    }
+  const navigateToProfile = (username: string) => {
+    onClose();
+    setTimeout(() => { navigation.navigate('PublicProfile', { targetUser: username }); }, 300);
   };
 
-  const handleDeleteComment = (commentId: number) => {
-    Alert.alert("Delete", "Permanently delete this comment?", [
-      { text: "Cancel", style: "cancel" },
-      { text: "Delete", style: "destructive", onPress: () => executeDelete(commentId) }
-    ], { cancelable: true });
+  const getFullAvatarUrl = (uri: string | null) => {
+    if (!uri) return null;
+    if (uri.startsWith('http')) return uri;
+    return `${BASE_URL.replace(/\/$/, '')}${uri.startsWith('/') ? uri : `/${uri}`}`;
   };
 
-  const handleReportComment = (commentId: number, username: string) => {
-    Alert.alert("Report Comment", "Flag this comment for community moderation?", [
-      { text: "Cancel", style: "cancel" },
-      { text: "Report", style: "destructive", onPress: () => {
-          apiClient.post(API_ROUTES.MODERATION.REPORT, { targetId: commentId, type: 'COMMENT_REPORT', targetUser: username }).catch(()=>{});
-          Toast.show({ type: 'success', text1: 'Reported', text2: 'Comment flagged for review.' });
-      }}
-    ], { cancelable: true });
-  };
-
-  const renderComment = ({ item }: { item: Comment }) => {
+  const renderComment = ({ item }: { item: any }) => {
     const isReply = item.parentId !== null;
-    const cleanCommentAuthor = (item.username || '').replace(/^@/, '').trim().toLowerCase();
-    const isOwner = activeUser === cleanCommentAuthor;
+    const cleanAuthor = (item.username || '').replace(/^@/, '').trim().toLowerCase();
+    
+    // 🟢 FIX: Handle both direct structure and deep object structure
+    const rawAvatar = item.avatarUrl || item.profilePictureUrl || item.profile?.avatarUrl;
+    const avatarUri = getFullAvatarUrl(rawAvatar);
 
     return (
-      <View style={{ marginLeft: isReply ? 32 : 16, marginRight: 16, marginTop: 16, paddingLeft: isReply ? 12 : 0, borderLeftWidth: isReply ? 2 : 0, borderColor: '#262626' }}>
-        <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-          <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-            <View style={{ width: 28, height: 28, borderRadius: 14, backgroundColor: '#262626', justifyContent: 'center', alignItems: 'center', marginRight: 10 }}>
-              <Text style={{ color: '#FFFFFF', fontWeight: 'bold', fontSize: 12 }}>{cleanCommentAuthor[0]?.toUpperCase()}</Text>
-            </View>
-            <Text style={{ color: 'white', fontWeight: 'bold', fontSize: 14 }}>@{cleanCommentAuthor}</Text>
-          </View>
-          
-          <View style={{ flexDirection: 'row' }}>
-            {isOwner ? (
-              <TouchableOpacity onPress={() => handleDeleteComment(item.id)} style={{ padding: 6 }} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
-                <Feather name="trash-2" size={15} color="#FF3B30" />
-              </TouchableOpacity>
-            ) : (
-              <TouchableOpacity onPress={() => handleReportComment(item.id, cleanCommentAuthor)} style={{ padding: 6 }} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
-                <Feather name="flag" size={14} color="#666" />
-              </TouchableOpacity>
-            )}
-          </View>
+      <View style={[styles.commentNode, isReply && styles.replyNode]}>
+        <View style={styles.commentHeader}>
+          <TouchableOpacity style={styles.authorRow} onPress={() => navigateToProfile(cleanAuthor)}>
+            {avatarUri ? <Image source={{ uri: avatarUri }} style={styles.avatarImage} /> : <View style={styles.avatarPlaceholder}><Text style={styles.avatarLetter}>{cleanAuthor[0]?.toUpperCase() || 'U'}</Text></View>}
+            <Text style={styles.authorName}>@{cleanAuthor}</Text>
+          </TouchableOpacity>
         </View>
-
-        <Text style={{ color: '#E0E0E0', marginTop: 8, fontSize: 14, paddingLeft: 38, lineHeight: 20 }}>{item.content}</Text>
-        
-        <TouchableOpacity style={{ marginTop: 8, paddingLeft: 38 }} onPress={() => setReplyingTo(item)} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
-          <Text style={{ color: '#666666', fontSize: 11, fontWeight: '800', letterSpacing: 0.5 }}>REPLY</Text>
+        <Text style={styles.commentContent}>{item.content}</Text>
+        <TouchableOpacity style={styles.replyButton} onPress={() => { setReplyingTo(item); inputRef.current?.focus(); }}>
+          <Text style={styles.replyText}>REPLY</Text>
         </TouchableOpacity>
       </View>
     );
   };
 
-  const modalContent = (
-    <>
-      <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', padding: 16, borderBottomWidth: 1, borderColor: '#262626', marginTop: Platform.OS === 'ios' ? 0 : 10 }}>
-        <Text style={{ color: 'white', fontSize: 16, fontWeight: 'bold' }}>Comments</Text>
-        <TouchableOpacity onPress={onClose} style={{ padding: 4 }} hitSlop={{ top: 15, bottom: 15, left: 15, right: 15 }}>
-          <Feather name="chevron-down" size={24} color="white" />
-        </TouchableOpacity>
-      </View>
+  return (
+    <Modal visible={visible} animationType="slide" transparent={true} onRequestClose={onClose}>
+      <View style={styles.modalOverlay}>
+        <TouchableOpacity style={styles.dismissArea} activeOpacity={1} onPress={onClose} />
+        <KeyboardAvoidingView style={[styles.bottomSheetContainer, Platform.OS === 'android' && { paddingBottom: keyboardHeight }]} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+          <View style={styles.sheetHeader}>
+            <Text style={styles.headerTitle}>Comments</Text>
+            <TouchableOpacity onPress={onClose} hitSlop={{ top: 15, bottom: 15, left: 15, right: 15 }}><Feather name="x" size={24} color={colors.text} /></TouchableOpacity>
+          </View>
 
-      {loading ? (
-        <ActivityIndicator size="large" color="#fff" style={{ marginTop: 50 }} />
-      ) : (
-        <FlatList
-          data={comments}
-          keyExtractor={(item, index) => item.id?.toString() || index.toString()}
-          renderItem={renderComment}
-          contentContainerStyle={{ paddingBottom: 20 }}
-          keyboardShouldPersistTaps="handled" // 🟢 CRITICAL FIX: Allows the send button to be tapped while keyboard is open
-          ListEmptyComponent={<Text style={{ color: '#666', textAlign: 'center', marginTop: 50 }}>No comments yet.</Text>}
-        />
-      )}
+          {loading ? <ActivityIndicator size="large" color={colors.textMuted} style={{ marginTop: 40 }} /> : (
+            <FlatList data={comments} keyExtractor={(item) => item.id.toString()} renderItem={renderComment} contentContainerStyle={{ paddingBottom: 20 }} keyboardShouldPersistTaps="handled" ListEmptyComponent={<Text style={styles.emptyText}>No comments yet.</Text>} />
+          )}
 
-      <View style={{ padding: 16, borderTopWidth: 1, borderColor: '#262626', backgroundColor: '#000000', paddingBottom: Math.max(insets.bottom, 16) }}>
-        {replyingTo && (
-          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
-            <Text style={{ color: '#8E95A5', fontSize: 12 }}>Replying to @{replyingTo.username.replace(/^@/, '')}</Text>
-            <TouchableOpacity onPress={() => setReplyingTo(null)} hitSlop={{ top: 15, bottom: 15, left: 15, right: 15 }}>
-              <Feather name="x-circle" size={16} color="#FF4444" />
+          {replyingTo && (
+            <View style={styles.replyingIndicator}>
+              <Text style={styles.replyingText}>Replying to @{replyingTo.username}</Text>
+              <TouchableOpacity onPress={() => setReplyingTo(null)}><Feather name="x-circle" size={16} color={colors.textMuted} /></TouchableOpacity>
+            </View>
+          )}
+
+          <View style={styles.inputContainer}>
+            <TextInput ref={inputRef} style={styles.input} placeholder="Add a comment..." placeholderTextColor={colors.textMuted} value={newComment} onChangeText={setNewComment} multiline maxLength={500} />
+            <TouchableOpacity style={[styles.sendButton, !newComment.trim() && { opacity: 0.5 }]} onPress={handleSend} disabled={!newComment.trim() || isSubmitting}>
+              {isSubmitting ? <ActivityIndicator size="small" color="#FFF" /> : <Feather name="send" size={20} color="#FFF" />}
             </TouchableOpacity>
           </View>
-        )}
-        <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-          <TextInput
-            value={newComment} 
-            onChangeText={setNewComment}
-            placeholder={replyingTo ? `Reply to @${replyingTo.username.replace(/^@/, '')}...` : "Type a comment..."} 
-            placeholderTextColor="#666666"
-            style={{ flex: 1, color: 'white', backgroundColor: '#1A1A1A', paddingHorizontal: 16, paddingVertical: 12, borderRadius: 20, maxHeight: 100, borderWidth: 1, borderColor: '#262626' }}
-            multiline
-          />
-          <TouchableOpacity onPress={handlePostComment} style={{ marginLeft: 12, padding: 12, backgroundColor: newComment.trim() ? '#262626' : 'transparent', borderRadius: 20 }} disabled={!newComment.trim()}>
-            <Feather name="send" size={18} color={newComment.trim() ? "#FFFFFF" : "#404040"} />
-          </TouchableOpacity>
-        </View>
+        </KeyboardAvoidingView>
       </View>
-    </>
-  );
-
-  return Platform.OS === 'ios' ? (
-    <KeyboardAvoidingView style={{ flex: 1, backgroundColor: '#121212' }} behavior="padding">
-      {modalContent}
-    </KeyboardAvoidingView>
-  ) : (
-    // 🟢 CRITICAL FIX: Add margin bottom for Android so the input bar isn't eaten by the keyboard
-    <View style={{ flex: 1, backgroundColor: '#121212', marginBottom: keyboardHeight }}>
-      {modalContent}
-    </View>
+    </Modal>
   );
 }
+
+const getStyles = (colors: any, isDarkMode: boolean) => StyleSheet.create({
+  modalOverlay: { flex: 1, backgroundColor: isDarkMode ? 'rgba(0,0,0,0.7)' : 'rgba(0,0,0,0.3)', justifyContent: 'flex-end' },
+  dismissArea: { flex: 1 },
+  bottomSheetContainer: { backgroundColor: colors.background, borderTopLeftRadius: 20, borderTopRightRadius: 20, height: '75%', overflow: 'hidden' },
+  sheetHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', padding: 16, borderBottomWidth: 1, borderBottomColor: colors.border },
+  headerTitle: { color: colors.text, fontSize: 16, fontWeight: '800' },
+  commentNode: { marginLeft: 16, marginRight: 16, marginTop: 16 },
+  replyNode: { marginLeft: 44, paddingLeft: 12, borderLeftWidth: 2, borderColor: colors.border },
+  commentHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  authorRow: { flexDirection: 'row', alignItems: 'center' },
+  avatarImage: { width: 28, height: 28, borderRadius: 14, marginRight: 10, backgroundColor: colors.surface },
+  avatarPlaceholder: { width: 28, height: 28, borderRadius: 14, backgroundColor: colors.surface, justifyContent: 'center', alignItems: 'center', marginRight: 10 },
+  avatarLetter: { color: colors.text, fontWeight: 'bold', fontSize: 12 },
+  authorName: { color: colors.text, fontWeight: 'bold', fontSize: 14 },
+  commentContent: { color: colors.text, marginTop: 8, fontSize: 14, paddingLeft: 38, lineHeight: 20 },
+  replyButton: { marginTop: 8, paddingLeft: 38 },
+  replyText: { color: colors.textMuted, fontSize: 11, fontWeight: '800' },
+  emptyText: { color: colors.textMuted, textAlign: 'center', marginTop: 40, fontSize: 14 },
+  replyingIndicator: { flexDirection: 'row', justifyContent: 'space-between', padding: 12, backgroundColor: colors.surface, borderTopWidth: 1, borderTopColor: colors.border },
+  replyingText: { color: colors.textMuted, fontSize: 13, fontWeight: '600' },
+  inputContainer: { flexDirection: 'row', alignItems: 'flex-end', padding: 12, backgroundColor: colors.background, borderTopWidth: 1, borderTopColor: colors.border },
+  input: { flex: 1, backgroundColor: colors.surface, color: colors.text, borderRadius: 20, paddingHorizontal: 16, paddingTop: 12, paddingBottom: 12, fontSize: 14, maxHeight: 100, borderWidth: 1, borderColor: colors.border },
+  sendButton: { width: 40, height: 40, borderRadius: 20, backgroundColor: colors.primary, justifyContent: 'center', alignItems: 'center', marginLeft: 10, marginBottom: 2 },
+});

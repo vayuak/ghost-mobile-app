@@ -1,33 +1,24 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 // 🟢 DYNAMIC ENVIRONMENT CONFIGURATION
-const DEFAULT_URL = 'https://sandbag-sterling-leggings.ngrok-free.dev';
+const DEFAULT_URL = 'https://letdown-citric-dividable.ngrok-free.dev';
 export const BASE_URL = (process.env.EXPO_PUBLIC_API_BASE_URL || DEFAULT_URL).replace(/\/$/, '');
 
 if (!process.env.EXPO_PUBLIC_API_BASE_URL) {
-  throw new Error("CRITICAL: EXPO_PUBLIC_API_BASE_URL is not set in your .env file!");
+  console.warn("CRITICAL: EXPO_PUBLIC_API_BASE_URL is not set in your .env file!");
 }
 
 const getWsUrl = (baseUrl: string) => {
   const cleanUrl = baseUrl.replace(/\/$/, '');
-  if (cleanUrl.startsWith('https://')) {
-    return cleanUrl.replace('https://', 'wss://') + '/v1/ws/ws-chat';
-  }
+  if (cleanUrl.startsWith('https://')) return cleanUrl.replace('https://', 'wss://') + '/v1/ws/ws-chat';
   return cleanUrl.replace('http://', 'ws://') + '/v1/ws/ws-chat';
 };
 
 export const P2P_WS_URL = getWsUrl(BASE_URL);
 
-const GEMINI_API_KEY = process.env.EXPO_PUBLIC_GEMINI_API_KEY || 'YOUR_GEMINI_API_KEY_HERE';
-const SHIELD_KEY = process.env.EXPO_PUBLIC_SHIELD_KEY || 'gsk_live_8f7b2c9a4e1d5f6e8a0b3c2d1e4f5a6b7c8d9e0f1a2b3c4d5';
+const SHIELD_KEY = process.env.EXPO_PUBLIC_SHIELD_KEY || 'PermanentSecret999';
 
-// 🟢 FIX: Safe Parameter Encoder guarantees no `//` or blank paths ever hit the Gateway
-const safeParam = (param: string | number | undefined | null) => {
-  const str = String(param || '').trim();
-  return encodeURIComponent(str || 'unknown');
-};
-
-// Replace your existing API_ROUTES dictionary with this one:
+const safeParam = (param: string | number | undefined | null) => encodeURIComponent(String(param || '').trim() || 'unknown');
 
 export const API_ROUTES = {
   AUTH: {
@@ -48,22 +39,41 @@ export const API_ROUTES = {
     PING_LOCATION: '/v1/campfire/ping-location',
     REPORT: (username: string) => `/v1/campfire/report/${safeParam(username)}`,
   },
+  SEARCH: {
+    FEED: (city: string, page: number = 0, size: number = 20) => `/v1/social/feed?city=${safeParam(city)}&page=${page}&size=${size}`,
+    DISCOVER: (keyword: string) => `/v1/social/search?keyword=${safeParam(keyword)}`,
+  },
   SOCIAL: {
     CITIES: '/v1/social/meta/tier-one-cities',
     FEED: (city: string, page: number = 0, size: number = 20) => `/v1/social/feed?city=${safeParam(city)}&page=${page}&size=${size}`,
     DISCOVER: (keyword: string) => `/v1/social/search?keyword=${safeParam(keyword)}`,
     CREATE_POST: '/v1/social/post/upload-and-create',
+    USER_PROFILE: (username: string) => `/v1/social/user/${safeParam(username)}/full-profile`,
   },
   USERS: {
     PROFILE: (username: string) => `/v1/social/user/${safeParam(username)}/full-profile`,
     UPDATE_DP: '/v1/social/user/profile/upload-and-update',
   },
-  POSTS: {
+  PROFILE: {
+    MY_POSTS: '/v1/social/post/my-posts',
+    UPDATE_DP: '/v1/social/user/profile/upload-and-update',
+    DELETE_POST: (postId: string | number) => `/v1/social/post/${postId}/delete`,
+    USER_POSTS: (username: string) => `/v1/social/post/user/${safeParam(username)}`,
+  },
+  POST: {
+    GET_SINGLE: (postId: string | number) => `/v1/social/post/${safeParam(postId)}`,
+    VOTE: (postId: string | number, direction: string) => `/v1/social/post/${safeParam(postId)}/vote?direction=${direction}`,
+    GET_COMMENTS: (postId: string | number, timestamp: number) => `/v1/social/post/${safeParam(postId)}/comments?t=${timestamp}`,
+    CREATE_COMMENT: (postId: string | number) => `/v1/social/post/${safeParam(postId)}/comment`,
+    DELETE_COMMENT: (commentId: string | number) => `/v1/social/post/comment/${safeParam(commentId)}`,
+  },
+  POSTS: { 
     GET_SINGLE: (postId: string | number) => `/v1/social/post/${safeParam(postId)}`,
     DELETE: (postId: string | number) => `/v1/social/post/${postId}/delete`,
     VOTE: (postId: string | number, direction: string) => `/v1/social/post/${safeParam(postId)}/vote?direction=${direction}`,
     GET_COMMENTS: (postId: string | number, timestamp: number) => `/v1/social/post/${safeParam(postId)}/comments?t=${timestamp}`,
     CREATE_COMMENT: (postId: string | number) => `/v1/social/post/${safeParam(postId)}/comment`,
+    DELETE_COMMENT: (commentId: string | number) => `/v1/social/post/comment/${safeParam(commentId)}`,
   },
   COMMENTS: {
     DELETE: (commentId: string | number) => `/v1/social/post/comment/${safeParam(commentId)}`,
@@ -77,35 +87,22 @@ export const API_ROUTES = {
 };
 
 let onSessionExpiredCallback: (() => void) | null = null;
-
-export const setSessionExpiredHandler = (handler: () => void) => {
-  onSessionExpiredCallback = handler;
-};
+export const setSessionExpiredHandler = (handler: () => void) => { onSessionExpiredCallback = handler; };
 
 const getStoredToken = async (): Promise<string | null> => {
   try {
     const token = await AsyncStorage.getItem('ghost_token');
     if (token) return token;
     return await AsyncStorage.getItem('@ghost_token');
-  } catch {
-    return null;
-  }
+  } catch { return null; }
 };
 
 const wipeSession = async () => {
-  await AsyncStorage.multiRemove([
-    'ghost_token', '@ghost_token', 
-    'active_username', '@active_username', 
-    'user_avatar', '@user_avatar'
-  ]);
+  await AsyncStorage.multiRemove(['ghost_token', '@ghost_token', 'active_username', '@active_username', 'user_avatar', '@user_avatar']);
   if (onSessionExpiredCallback) onSessionExpiredCallback();
 };
 
-export const uploadMultipart = (
-  endpoint: string,
-  formData: FormData,
-  onProgress?: (percent: number) => void
-): Promise<any> => {
+export const uploadMultipart = (endpoint: string, formData: FormData, onProgress?: (percent: number) => void): Promise<any> => {
   return new Promise(async (resolve, reject) => {
     const token = await getStoredToken();
     const xhr = new XMLHttpRequest();
@@ -114,40 +111,29 @@ export const uploadMultipart = (
 
     xhr.setRequestHeader('Accept', 'application/json');
     xhr.setRequestHeader('X-Ghost-Shield-Key', SHIELD_KEY);
-    xhr.setRequestHeader('ngrok-skip-browser-warning', 'true'); // 🟢 FIX: Bypasses Ngrok Interstitial for uploads
+    xhr.setRequestHeader('ngrok-skip-browser-warning', 'true');
     if (token) xhr.setRequestHeader('Authorization', `Bearer ${token}`);
 
     if (onProgress && xhr.upload) {
-      xhr.upload.onprogress = (event: any) => {
-        if (event.lengthComputable && event.total > 0) {
-          onProgress(Math.round((event.loaded / event.total) * 100));
-        }
-      };
+      xhr.upload.onprogress = (event: any) => { if (event.lengthComputable && event.total > 0) onProgress(Math.round((event.loaded / event.total) * 100)); };
     }
 
     xhr.onload = async () => {
       let data: any = {};
-      try {
-        data = xhr.responseText ? JSON.parse(xhr.responseText) : {};
-      } catch {
-        data = { message: xhr.responseText };
-      }
+      try { data = xhr.responseText ? JSON.parse(xhr.responseText) : {}; } 
+      catch { data = { message: xhr.responseText }; }
 
       if (xhr.status === 401 || xhr.status === 403) {
         if (endpoint.includes('/auth/')) await wipeSession();
         return reject(new Error('Session expired. Please log in again.'));
       }
-
-      if (xhr.status >= 200 && xhr.status < 300) {
-        return resolve(data);
-      }
+      if (xhr.status >= 200 && xhr.status < 300) return resolve(data);
       reject(new Error(data.error || data.message || `Upload failed with status ${xhr.status}`));
     };
 
     xhr.onerror = () => reject(new Error('Network error during upload. Check your connection.'));
     xhr.ontimeout = () => reject(new Error('Upload timed out.'));
     xhr.onabort = () => reject(new Error('Upload cancelled.'));
-
     try { xhr.send(formData as any); } catch (e: any) { reject(new Error(e?.message || 'Could not start upload.')); }
   });
 };
@@ -155,10 +141,7 @@ export const uploadMultipart = (
 export const buildFilePart = (asset: { uri: string; fileName?: string | null; mimeType?: string | null }) => {
   const name = asset.fileName || asset.uri.split('/').pop() || 'upload.jpg';
   const ext = name.split('.').pop()?.toLowerCase();
-  const type =
-    asset.mimeType ||
-    (ext === 'png' ? 'image/png' : ext === 'mp4' ? 'video/mp4' : ext === 'mov' ? 'video/quicktime' : 'image/jpeg');
-
+  const type = asset.mimeType || (ext === 'png' ? 'image/png' : ext === 'mp4' ? 'video/mp4' : ext === 'mov' ? 'video/quicktime' : 'image/jpeg');
   return { uri: asset.uri, name, type } as any;
 };
 
@@ -170,68 +153,49 @@ export const apiClient = {
     const headers = new Headers(options.headers || {});
 
     const isFormData = options.body != null && typeof (options.body as any).append === 'function';
-
-    if (isFormData) {
-      throw new Error(`Use uploadMultipart() for multipart requests, not apiClient (endpoint: ${endpoint}).`);
-    }
+    if (isFormData) throw new Error(`Use uploadMultipart() for multipart requests, not apiClient.`);
 
     headers.set('Content-Type', 'application/json');
     headers.set('X-Ghost-Shield-Key', SHIELD_KEY);
-    headers.set('ngrok-skip-browser-warning', 'true'); // 🟢 FIX: Bypasses Ngrok Interstitial for all standard API calls
+    headers.set('ngrok-skip-browser-warning', 'true');
 
-    const isAuthRoute =
-      endpoint.includes('/auth/login') ||
-      endpoint.includes('/auth/register') ||
-      endpoint.includes('/auth/check-username') ||
-      endpoint.includes('/auth/verify-otp') ||
-      endpoint.includes('/auth/forgot-password') ||
-      endpoint.includes('/auth/reset-password');
-
+    const isAuthRoute = endpoint.includes('/auth/login') || endpoint.includes('/auth/register') || endpoint.includes('/auth/check-username') || endpoint.includes('/auth/verify-otp') || endpoint.includes('/auth/forgot-password') || endpoint.includes('/auth/reset-password');
     if (token && !isAuthRoute) headers.set('Authorization', `Bearer ${token}`);
 
     const config: RequestInit = { ...options, headers };
 
     try {
       const response = await fetch(url, config);
-
       if (response.status === 401 || response.status === 403) {
         if (endpoint.includes('/auth/me') || endpoint.includes('/auth/login')) await wipeSession();
         throw new Error("Session expired. Please log in again.");
       }
-
       const contentType = response.headers.get('content-type');
       let data;
-      if (contentType && contentType.includes('application/json')) {
-        data = await response.json();
-      } else {
-        const textData = await response.text();
-        data = { message: textData };
-      }
-
-      if (!response.ok) {
-        throw new Error(data.error || data.message || `Request failed with status ${response.status}`);
-      }
+      if (contentType && contentType.includes('application/json')) data = await response.json();
+      else { const textData = await response.text(); data = { message: textData }; }
+      
+      if (!response.ok) throw new Error(data.error || data.message || `Request failed with status ${response.status}`);
       return data;
     } catch (error: any) {
       console.warn(`[API] Issue at [${endpoint}]:`, error.message);
       throw error;
     }
   },
-
   get(endpoint: string, options?: RequestInit) { return this.request(endpoint, { ...options, method: 'GET' }); },
   post(endpoint: string, body?: any, options?: RequestInit) {
     const isFormData = body != null && typeof body.append === 'function';
-    if (isFormData) throw new Error(`Use uploadMultipart() for multipart POSTs, not apiClient (endpoint: ${endpoint}).`);
+    if (isFormData) throw new Error(`Use uploadMultipart() for multipart POSTs.`);
     return this.request(endpoint, { ...options, method: 'POST', body: body ? JSON.stringify(body) : undefined });
   },
   put(endpoint: string, body?: any, options?: RequestInit) {
     const isFormData = body != null && typeof body.append === 'function';
-    if (isFormData) throw new Error(`Use uploadMultipart() for multipart PUTs, not apiClient (endpoint: ${endpoint}).`);
+    if (isFormData) throw new Error(`Use uploadMultipart() for multipart PUTs.`);
     return this.request(endpoint, { ...options, method: 'PUT', body: body ? JSON.stringify(body) : undefined });
   },
   patch(endpoint: string, body?: any, options?: RequestInit) {
     const isFormData = body != null && typeof body.append === 'function';
-    if (isFormData) throw new Error(`Use uploadMultipart() for multipart PATCHs, not apiClient (endpoint: ${endpoint}).`);
+    if (isFormData) throw new Error(`Use uploadMultipart() for multipart PATCHs.`);
     return this.request(endpoint, { ...options, method: 'PATCH', body: body ? JSON.stringify(body) : undefined });
   },
   delete(endpoint: string, options?: RequestInit) { return this.request(endpoint, { ...options, method: 'DELETE' }); },
@@ -239,6 +203,6 @@ export const apiClient = {
 
 export const systemLogout = async () => {
   try { await apiClient.post(API_ROUTES.AUTH.LOGOUT); } 
-  catch (error) { console.warn("Backend logout unreachable, forcing local wipe.", error); } 
+  catch (error) {} 
   finally { await wipeSession(); }
 };
