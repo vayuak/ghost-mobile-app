@@ -3,7 +3,7 @@ import { StyleSheet, View, Text, TouchableOpacity, ActivityIndicator, Alert, Lin
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Feather } from '@expo/vector-icons';
 import { apiClient, API_ROUTES } from '../services/api';
-import { useTheme } from '../context/ThemeContext'; // 🟢 THEME ADDED
+import { useTheme } from '../context/ThemeContext'; 
 
 export default function PremiumUpgradeScreen({ navigation }: any) {
   const { colors } = useTheme();
@@ -50,18 +50,19 @@ export default function PremiumUpgradeScreen({ navigation }: any) {
   );
 }
 
+// 🟢 FIX: 100% flat styling with elegant rounded borders and soft shadows
 const getStyles = (colors: any) => StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.background },
-  header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 20, paddingVertical: 15, borderBottomWidth: 1, borderColor: colors.border },
+  header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 20, paddingVertical: 15 },
   headerTitle: { color: colors.text, fontSize: 14, fontWeight: '900', letterSpacing: 1 },
   content: { flex: 1, padding: 24, justifyContent: 'center', alignItems: 'center' },
-  badgeContainer: { backgroundColor: 'rgba(251, 191, 36, 0.15)', paddingHorizontal: 16, paddingVertical: 6, borderRadius: 20, borderBottomWidth: 1, borderColor: '#FBBF24', marginBottom: 20 },
+  badgeContainer: { backgroundColor: 'rgba(251, 191, 36, 0.15)', paddingHorizontal: 16, paddingVertical: 6, borderRadius: 20, marginBottom: 20 },
   badgeText: { color: '#FBBF24', fontWeight: '900', fontSize: 14, letterSpacing: 1 },
-  mainTitle: { color: colors.text, fontSize: 26, fontWeight: '900', textAlign: 'center', marginBottom: 8 },
-  subTitle: { color: colors.textMuted, fontSize: 14, textAlign: 'center', marginBottom: 32 },
-  featureBox: { width: '100%', backgroundColor: colors.surface, borderRadius: 16, padding: 20, borderWidth: 1, borderColor: colors.border, marginBottom: 32 },
+  mainTitle: { color: colors.text, fontSize: 28, fontWeight: '900', textAlign: 'center', marginBottom: 8 },
+  subTitle: { color: colors.textMuted, fontSize: 15, textAlign: 'center', marginBottom: 32 },
+  featureBox: { width: '100%', backgroundColor: colors.surface, borderRadius: 24, padding: 24, marginBottom: 32 },
   featureRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 16 },
-  featureText: { color: colors.text, fontSize: 14, fontWeight: '700', marginLeft: 12 },
-  upgradeBtn: { width: '100%', backgroundColor: '#FBBF24', paddingVertical: 16, borderRadius: 30, alignItems: 'center' },
+  featureText: { color: colors.text, fontSize: 15, fontWeight: '700', marginLeft: 12 },
+  upgradeBtn: { width: '100%', backgroundColor: '#FBBF24', paddingVertical: 18, borderRadius: 30, alignItems: 'center', shadowColor: '#FBBF24', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.3, shadowRadius: 8, elevation: 4 },
   upgradeBtnText: { color: '#000000', fontWeight: '900', fontSize: 15, letterSpacing: 0.5 }
 });

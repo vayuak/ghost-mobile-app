@@ -11,33 +11,28 @@ import ProfileScreen from '../screens/ProfileScreen';
 import GossipsInboxScreen from '../screens/GossipsInboxScreen';
 import { DropsScreen } from '../screens/DropScreen';
 import { getUnreadChatsCount } from '../services/LocalDB';
+import { useTheme } from '../context/ThemeContext'; 
 
 const Tab = createBottomTabNavigator();
-const BAR_CONTENT_HEIGHT = 58; 
 
 export default function TabNavigator({ onLogoutTrigger }: { onLogoutTrigger: () => void }) {
+  const { colors, isDarkMode } = useTheme();
+  const insets = useSafeAreaInsets();
+  
   const [unreadChats, setUnreadChats] = useState(0);
   const [unreadDrops, setUnreadDrops] = useState(0);
   const [hasUnreadProfileNotifications] = useState(false);
-  const insets = useSafeAreaInsets();
 
-  // 🟢 Battery-friendly event listener. Triggers ONLY when SQLite saves or marks a message.
   useEffect(() => {
     const updateChatBadge = async () => {
       try {
         const me = await AsyncStorage.getItem('@active_username');
-        if (me) {
-          setUnreadChats(getUnreadChatsCount(me));
-        }
+        if (me) setUnreadChats(getUnreadChatsCount(me));
       } catch (e) { }
     };
-
-    updateChatBadge(); // Check on mount
+    updateChatBadge(); 
     const subscription = DeviceEventEmitter.addListener('db_chats_updated', updateChatBadge);
-
-    return () => {
-      subscription.remove();
-    };
+    return () => subscription.remove();
   }, []);
 
   return (
@@ -45,23 +40,25 @@ export default function TabNavigator({ onLogoutTrigger }: { onLogoutTrigger: () 
       screenOptions={({ route }) => ({
         headerShown: false,
         tabBarStyle: {
-          backgroundColor: '#000000',
-          borderTopColor: '#262626',
-          borderTopWidth: 1,
-          height: BAR_CONTENT_HEIGHT + insets.bottom,
-          paddingBottom: insets.bottom + 6,
-          paddingTop: 8,
+          // 🟢 Sleek, frosted minimal tab bar
+          backgroundColor: isDarkMode ? 'rgba(0,0,0,0.96)' : 'rgba(255,255,255,0.96)', 
+          borderTopColor: colors.border,
+          borderTopWidth: isDarkMode ? 0 : 0.5,
+          height: 52 + insets.bottom, 
+          paddingBottom: insets.bottom, 
+          paddingTop: 4, 
           elevation: 0,
+          position: 'absolute', // Allows content to scroll underneath beautifully
         },
-        tabBarActiveTintColor: '#FFFFFF',
-        tabBarInactiveTintColor: '#404040',
-        tabBarLabelStyle: { fontSize: 10, fontWeight: '900', letterSpacing: 1, marginTop: 2 },
+        tabBarActiveTintColor: colors.text,
+        tabBarInactiveTintColor: colors.textMuted,
+        tabBarLabelStyle: { fontSize: 10, fontWeight: '800', letterSpacing: 0.5, marginTop: 2 },
         tabBarIcon: ({ color }) => {
-          if (route.name === 'Home') return <Feather name="home" size={20} color={color} />;
-          if (route.name === 'AirDrop') return <Feather name="radio" size={20} color={color} />;
-          if (route.name === 'Create') return <Feather name="plus-square" size={20} color={color} />;
-          if (route.name === 'Gossips') return <MaterialCommunityIcons name="message-text-outline" size={20} color={color} />;
-          return <Feather name="user" size={20} color={color} />;
+          if (route.name === 'Home') return <Feather name="home" size={24} color={color} />;
+          if (route.name === 'AirDrop') return <Feather name="radio" size={24} color={color} />;
+          if (route.name === 'Create') return <Feather name="plus-square" size={24} color={color} />;
+          if (route.name === 'Gossips') return <MaterialCommunityIcons name="message-text-outline" size={24} color={color} />;
+          return <Feather name="user" size={24} color={color} />;
         },
       })}
     >
@@ -74,7 +71,7 @@ export default function TabNavigator({ onLogoutTrigger }: { onLogoutTrigger: () 
         options={{ 
           tabBarLabel: 'AirDrop',
           tabBarBadge: unreadDrops > 0 ? unreadDrops : undefined,
-          tabBarBadgeStyle: { backgroundColor: '#262626', color: '#FFFFFF', fontWeight: '900', borderWidth: 1, borderColor: '#404040' },
+          tabBarBadgeStyle: { backgroundColor: '#FF3B30', color: '#FFF', fontWeight: '900', fontSize: 10 },
         }}
       >
         {(props) => <DropsScreen {...props} onUnreadCountChange={setUnreadDrops} />}
@@ -86,9 +83,10 @@ export default function TabNavigator({ onLogoutTrigger }: { onLogoutTrigger: () 
         name="Gossips"
         component={GossipsInboxScreen}
         options={{
-          tabBarLabel: 'Gossips',
+          tabBarLabel: 'Chats',
           tabBarBadge: unreadChats > 0 ? unreadChats : undefined,
-          tabBarBadgeStyle: { backgroundColor: '#262626', color: '#FFFFFF', fontWeight: '900', borderWidth: 1, borderColor: '#404040' },
+          // 🟢 Exact WhatsApp Green Badge
+          tabBarBadgeStyle: { backgroundColor: '#25D366', color: '#FFF', fontWeight: 'bold', fontSize: 11 }, 
         }}
       />
 

@@ -87,10 +87,12 @@ export default function CreateDirectiveScreen({ navigation }: any) {
       <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={{ flex: 1 }}>
         <View style={styles.container}>
           <Text style={styles.title}>CREATE POST</Text>
+          
           <View style={styles.inputWrapper}>
             <TextInput style={styles.input} placeholder="Post Title (Max 20 chars)..." placeholderTextColor={colors.textMuted} value={postTitle} onChangeText={setPostTitle} maxLength={20} />
             <Text style={[styles.charCounter, postTitle.length >= 20 ? styles.charCounterLimit : null]}>{postTitle.length}/20</Text>
           </View>
+          
           <View style={styles.inputWrapper}>
             <TextInput style={[styles.input, { height: 120, paddingTop: 16, paddingBottom: 30 }]} placeholder="What's on your mind? (Max 100 chars)..." placeholderTextColor={colors.textMuted} value={postContent} onChangeText={setPostContent} multiline maxLength={100} />
             <Text style={[styles.charCounter, { bottom: 24 }, postContent.length >= 100 ? styles.charCounterLimit : null]}>{postContent.length}/100</Text>
@@ -136,8 +138,31 @@ export default function CreateDirectiveScreen({ navigation }: any) {
             <Text style={[styles.mediaBtnText, mediaUri ? { color: '#34C759' } : null]}>{mediaUri ? 'MEDIA ATTACHED' : 'ATTACH MEDIA (MAX 50MB)'}</Text>
           </TouchableOpacity>
 
-          <TouchableOpacity style={[styles.publishBtn, (!postTitle.trim() || !postContent.trim() || !mediaUri) ? { opacity: 0.5 } : null]} onPress={handlePublish} disabled={!postTitle.trim() || !postContent.trim() || !mediaUri || loading}>
-            {loading ? <Text style={styles.publishBtnText}>{uploadPercent !== null ? `UPLOADING ${uploadPercent}%` : 'PUBLISHING...'}</Text> : <Text style={styles.publishBtnText}>PUBLISH POST</Text>}
+          {/* 🟢 Solid Color UI for Disabled State (No blur/opacity) */}
+          <TouchableOpacity 
+            style={[
+              styles.publishBtn, 
+              (!postTitle.trim() || !postContent.trim() || !mediaUri) 
+                ? { backgroundColor: colors.surface, borderColor: colors.border } 
+                : { backgroundColor: colors.text, borderColor: colors.text }
+            ]} 
+            onPress={handlePublish} 
+            disabled={!postTitle.trim() || !postContent.trim() || !mediaUri || loading}
+          >
+            {loading ? (
+              <Text style={[styles.publishBtnText, { color: colors.background }]}>
+                {uploadPercent !== null ? `UPLOADING ${uploadPercent}%` : 'PUBLISHING...'}
+              </Text>
+            ) : (
+              <Text style={[
+                styles.publishBtnText, 
+                (!postTitle.trim() || !postContent.trim() || !mediaUri) 
+                  ? { color: colors.textMuted } 
+                  : { color: colors.background }
+              ]}>
+                PUBLISH POST
+              </Text>
+            )}
           </TouchableOpacity>
         </View>
       </KeyboardAvoidingView>
@@ -168,6 +193,6 @@ const getStyles = (colors: any, isDarkMode: boolean) => StyleSheet.create({
   mediaBtn: { flexDirection: 'row', padding: 16, borderRadius: 8, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surface, alignItems: 'center', justifyContent: 'center', marginBottom: 24 },
   mediaBtnActive: { borderColor: '#34C759', backgroundColor: 'rgba(52, 199, 89, 0.05)' },
   mediaBtnText: { fontWeight: '800', color: colors.textMuted, letterSpacing: 1 },
-  publishBtn: { backgroundColor: colors.text, padding: 18, borderRadius: 8, alignItems: 'center', borderWidth: 1, borderColor: colors.border },
-  publishBtnText: { color: colors.background, fontWeight: '900', letterSpacing: 2 }
+  publishBtn: { padding: 18, borderRadius: 8, alignItems: 'center', borderWidth: 1 },
+  publishBtnText: { fontWeight: '900', letterSpacing: 2 }
 });

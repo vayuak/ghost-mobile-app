@@ -1,10 +1,10 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { StyleSheet, Text, View, TextInput, TouchableOpacity, FlatList, ActivityIndicator, Modal, ScrollView, RefreshControl, Platform } from 'react-native';
+import { StyleSheet, Text, View, TextInput, TouchableOpacity, FlatList, ActivityIndicator, Modal, ScrollView, RefreshControl, Platform, Image } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context'; 
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useFocusEffect } from '@react-navigation/native';
 import { Feather } from '@expo/vector-icons';
-import { apiClient, API_ROUTES } from '../services/api';
+import { apiClient, API_ROUTES, BASE_URL } from '../services/api';
 import PostCard from '../components/PostCard';
 import { ensureKeysPublished } from '../services/CryptoVault';
 import { useTheme } from '../context/ThemeContext'; 
@@ -35,6 +35,7 @@ export default function HomeFeedScreen({ navigation, route }: any) {
   
   const [citySearchQuery, setCitySearchQuery] = useState(''); 
   const [activeUser, setActiveUser] = useState<string>('');
+  const [authToken, setAuthToken] = useState<string | null>(null);
   const searchInputRef = useRef<TextInput>(null);
 
   const viewabilityConfig = useRef({ itemVisiblePercentThreshold: 50 }).current;
@@ -44,6 +45,7 @@ export default function HomeFeedScreen({ navigation, route }: any) {
   useEffect(() => {
     ensureKeysPublished().catch(() => {});
     AsyncStorage.getItem('@active_username').then(user => { if (user) setActiveUser(user); });
+    AsyncStorage.getItem('@ghost_token').then(token => setAuthToken(token));
   }, []);
 
   useFocusEffect(useCallback(() => {
@@ -152,9 +154,20 @@ export default function HomeFeedScreen({ navigation, route }: any) {
           <FlatList data={searchResults} keyExtractor={(item, index) => item.id ? item.id.toString() : index.toString()} contentContainerStyle={{ paddingBottom: 20 }} onViewableItemsChanged={onSearchViewableItemsChanged} viewabilityConfig={viewabilityConfig}
             renderItem={({ item }) => {
               if (searchType === 'USERS') {
+                // 🟢 FIX: Handle deep JSON parsing for DPs and apply the token
+                const rawAvatar = item.avatarUrl || item.profilePictureUrl || item.profile?.avatarUrl || item.profile?.profilePictureUrl;
+                const formattedAvatar = rawAvatar ? (rawAvatar.startsWith('http') ? rawAvatar : `${BASE_URL.replace(/\/$/, '')}${rawAvatar.startsWith('/') ? rawAvatar : `/${rawAvatar}`}`) : null;
+
                 return (
+                  // 🟢 FIX: Removed rigid box styling, made it perfectly flat like Insta
                   <TouchableOpacity style={styles.userCard} onPress={() => handleUserTap(item.username)}>
-                    <View style={styles.avatarPlaceholder}><Text style={{ color: colors.text, fontWeight: '900' }}>{item.username ? item.username[0].toUpperCase() : 'U'}</Text></View>
+                    <View style={styles.avatarPlaceholder}>
+                      {formattedAvatar ? (
+                        <Image source={{ uri: formattedAvatar, headers: authToken ? { Authorization: `Bearer ${authToken}` } : undefined }} style={{ width: '100%', height: '100%', borderRadius: 24 }} />
+                      ) : (
+                        <Text style={{ color: colors.text, fontWeight: '900', fontSize: 16 }}>{item.username ? item.username[0].toUpperCase() : 'U'}</Text>
+                      )}
+                    </View>
                     <Text style={styles.userText}>@{item.username}</Text>
                   </TouchableOpacity>
                 );
@@ -200,9 +213,9 @@ const getStyles = (colors: any, isDarkMode: boolean) => StyleSheet.create({
   searchInput: { flex: 1, color: colors.text, fontSize: 14, fontWeight: '700' },
   cancelBtnText: { color: colors.danger, fontWeight: '700', fontSize: 15 },
   modalContainer: { flex: 1, backgroundColor: colors.background },
-  userCard: { flexDirection: 'row', alignItems: 'center', backgroundColor: colors.surface, borderRadius: 8, padding: 16, marginHorizontal: 16, marginTop: 12, borderWidth: 1, borderColor: colors.border },
-  avatarPlaceholder: { width: 40, height: 40, borderRadius: 20, backgroundColor: colors.background, justifyContent: 'center', alignItems: 'center', borderWidth: 1, borderColor: colors.border, overflow: 'hidden' },
-  userText: { color: colors.text, fontSize: 14, fontWeight: '800', marginLeft: 16, letterSpacing: 1 },
+  userCard: { flexDirection: 'row', alignItems: 'center', paddingVertical: 12, paddingHorizontal: 16, backgroundColor: colors.background },
+  avatarPlaceholder: { width: 48, height: 48, borderRadius: 24, backgroundColor: colors.surface, justifyContent: 'center', alignItems: 'center', overflow: 'hidden' },
+  userText: { color: colors.text, fontSize: 14, fontWeight: '700', marginLeft: 16 },
   emptyState: { alignItems: 'center', justifyContent: 'center', marginTop: 100 },
   emptyStateText: { marginTop: 16, color: colors.textMuted, fontSize: 14, fontWeight: '800', letterSpacing: 1, textAlign: 'center' },
   skeletonCard: { backgroundColor: colors.surface, borderRadius: 8, borderWidth: 1, borderColor: colors.border, marginHorizontal: 16, marginBottom: 16, padding: 16 },

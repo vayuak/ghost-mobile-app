@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { StyleSheet, Text, View, TextInput, TouchableOpacity, FlatList, KeyboardAvoidingView, Platform, Image, ActivityIndicator, Modal, Keyboard } from 'react-native';
+import { StyleSheet, Text, View, TextInput, TouchableOpacity, FlatList, KeyboardAvoidingView, Platform, Image, ActivityIndicator, Modal, Keyboard, Alert } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
 import { apiClient, BASE_URL, API_ROUTES } from '../services/api';
@@ -43,7 +43,8 @@ export default function CommentsModal({ visible, postId, currentUsername, onClos
 
   const fetchComments = async () => {
     try {
-      const data = await apiClient.get(API_ROUTES.POST.GET_COMMENTS(postId, Date.now()));
+      // Note: Adjust API_ROUTES.POSTS or POST based on your exact api.ts structure
+      const data = await apiClient.get(API_ROUTES.POSTS.GET_COMMENTS(postId, Date.now()));
       setComments(data || []);
     } catch (error) { console.warn("Fetch failed"); } 
     finally { setLoading(false); }
@@ -55,13 +56,40 @@ export default function CommentsModal({ visible, postId, currentUsername, onClos
 
     setIsSubmitting(true);
     try {
-      await apiClient.post(API_ROUTES.POST.CREATE_COMMENT(postId), { content: text, parentId: replyingTo ? replyingTo.id : null });
+      await apiClient.post(API_ROUTES.POSTS.CREATE_COMMENT(postId), { content: text, parentId: replyingTo ? replyingTo.id : null });
       setNewComment('');
       setReplyingTo(null);
       if (onCommentAdded) onCommentAdded();
       await fetchComments(); 
     } catch (error: any) { Toast.show({ type: 'error', text1: 'Failed to post', text2: error.message }); } 
     finally { setIsSubmitting(false); }
+  };
+
+  const handleDeleteComment = (commentId: string | number) => {
+    Alert.alert("Delete", "Delete this comment?", [
+      { text: "Cancel", style: "cancel" },
+      { text: "Delete", style: "destructive", onPress: async () => {
+          try {
+            await apiClient.delete(API_ROUTES.POSTS.DELETE_COMMENT(commentId));
+            setComments(prev => prev.filter(c => c.id !== commentId && c.parentId !== commentId));
+            if (onCommentDeleted) onCommentDeleted();
+          } catch (e) { Toast.show({ type: 'error', text1: 'Error', text2: 'Could not delete comment' }); }
+      }}
+    ]);
+  };
+
+  const handleReportComment = (commentId: string | number) => {
+    Alert.alert("Report", "Flag this comment?", [
+      { text: "Cancel", style: "cancel" },
+      { text: "Report", style: "destructive", onPress: async () => {
+          try {
+            await apiClient.post(API_ROUTES.MODERATION.REPORT, { targetId: commentId, type: 'COMMENT_REPORT' });
+            setComments(prev => prev.filter(c => c.id !== commentId && c.parentId !== commentId));
+            if (onCommentDeleted) onCommentDeleted();
+            Toast.show({ type: 'success', text1: 'Reported', text2: 'Comment flagged for review.' });
+          } catch (e) { Toast.show({ type: 'error', text1: 'Error', text2: 'Could not report comment' }); }
+      }}
+    ]);
   };
 
   const navigateToProfile = (username: string) => {
@@ -79,7 +107,6 @@ export default function CommentsModal({ visible, postId, currentUsername, onClos
     const isReply = item.parentId !== null;
     const cleanAuthor = (item.username || '').replace(/^@/, '').trim().toLowerCase();
     
-    // 🟢 FIX: Handle both direct structure and deep object structure
     const rawAvatar = item.avatarUrl || item.profilePictureUrl || item.profile?.avatarUrl;
     const avatarUri = getFullAvatarUrl(rawAvatar);
 
@@ -90,10 +117,20 @@ export default function CommentsModal({ visible, postId, currentUsername, onClos
             {avatarUri ? <Image source={{ uri: avatarUri }} style={styles.avatarImage} /> : <View style={styles.avatarPlaceholder}><Text style={styles.avatarLetter}>{cleanAuthor[0]?.toUpperCase() || 'U'}</Text></View>}
             <Text style={styles.authorName}>@{cleanAuthor}</Text>
           </TouchableOpacity>
+          
+          {cleanAuthor === (currentUsername || '').replace(/^@/, '').trim().toLowerCase() ? (
+             <TouchableOpacity onPress={() => handleDeleteComment(item.id)} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
+               <Feather name="trash-2" size={14} color={colors.danger}/>
+             </TouchableOpacity>
+          ) : (
+             <TouchableOpacity onPress={() => handleReportComment(item.id)} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
+               <Feather name="flag" size={12} color={colors.textMuted}/>
+             </TouchableOpacity>
+          )}
         </View>
         <Text style={styles.commentContent}>{item.content}</Text>
         <TouchableOpacity style={styles.replyButton} onPress={() => { setReplyingTo(item); inputRef.current?.focus(); }}>
-          <Text style={styles.replyText}>REPLY</Text>
+          <Text style={styles.replyText}>Reply</Text>
         </TouchableOpacity>
       </View>
     );
@@ -123,7 +160,7 @@ export default function CommentsModal({ visible, postId, currentUsername, onClos
           <View style={styles.inputContainer}>
             <TextInput ref={inputRef} style={styles.input} placeholder="Add a comment..." placeholderTextColor={colors.textMuted} value={newComment} onChangeText={setNewComment} multiline maxLength={500} />
             <TouchableOpacity style={[styles.sendButton, !newComment.trim() && { opacity: 0.5 }]} onPress={handleSend} disabled={!newComment.trim() || isSubmitting}>
-              {isSubmitting ? <ActivityIndicator size="small" color="#FFF" /> : <Feather name="send" size={20} color="#FFF" />}
+              {isSubmitting ? <ActivityIndicator size="small" color="#FFF" /> : <Feather name="arrow-up" size={20} color="#FFF" />}
             </TouchableOpacity>
           </View>
         </KeyboardAvoidingView>
@@ -133,26 +170,26 @@ export default function CommentsModal({ visible, postId, currentUsername, onClos
 }
 
 const getStyles = (colors: any, isDarkMode: boolean) => StyleSheet.create({
-  modalOverlay: { flex: 1, backgroundColor: isDarkMode ? 'rgba(0,0,0,0.7)' : 'rgba(0,0,0,0.3)', justifyContent: 'flex-end' },
+  modalOverlay: { flex: 1, backgroundColor: isDarkMode ? 'rgba(0,0,0,0.7)' : 'rgba(0,0,0,0.4)', justifyContent: 'flex-end' },
   dismissArea: { flex: 1 },
-  bottomSheetContainer: { backgroundColor: colors.background, borderTopLeftRadius: 20, borderTopRightRadius: 20, height: '75%', overflow: 'hidden' },
-  sheetHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', padding: 16, borderBottomWidth: 1, borderBottomColor: colors.border },
+  bottomSheetContainer: { backgroundColor: colors.background, borderTopLeftRadius: 24, borderTopRightRadius: 24, height: '80%', overflow: 'hidden' },
+  sheetHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', padding: 20 },
   headerTitle: { color: colors.text, fontSize: 16, fontWeight: '800' },
   commentNode: { marginLeft: 16, marginRight: 16, marginTop: 16 },
-  replyNode: { marginLeft: 44, paddingLeft: 12, borderLeftWidth: 2, borderColor: colors.border },
+  replyNode: { marginLeft: 44, paddingLeft: 12, borderLeftWidth: 2, borderColor: colors.surface }, 
   commentHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   authorRow: { flexDirection: 'row', alignItems: 'center' },
-  avatarImage: { width: 28, height: 28, borderRadius: 14, marginRight: 10, backgroundColor: colors.surface },
-  avatarPlaceholder: { width: 28, height: 28, borderRadius: 14, backgroundColor: colors.surface, justifyContent: 'center', alignItems: 'center', marginRight: 10 },
-  avatarLetter: { color: colors.text, fontWeight: 'bold', fontSize: 12 },
-  authorName: { color: colors.text, fontWeight: 'bold', fontSize: 14 },
-  commentContent: { color: colors.text, marginTop: 8, fontSize: 14, paddingLeft: 38, lineHeight: 20 },
-  replyButton: { marginTop: 8, paddingLeft: 38 },
+  avatarImage: { width: 32, height: 32, borderRadius: 16, marginRight: 10, backgroundColor: colors.surface },
+  avatarPlaceholder: { width: 32, height: 32, borderRadius: 16, backgroundColor: colors.surface, justifyContent: 'center', alignItems: 'center', marginRight: 10 },
+  avatarLetter: { color: colors.text, fontWeight: 'bold', fontSize: 13 },
+  authorName: { color: colors.text, fontWeight: 'bold', fontSize: 13 },
+  commentContent: { color: colors.text, marginTop: 4, fontSize: 14, paddingLeft: 42, lineHeight: 20 },
+  replyButton: { marginTop: 6, paddingLeft: 42 },
   replyText: { color: colors.textMuted, fontSize: 11, fontWeight: '800' },
   emptyText: { color: colors.textMuted, textAlign: 'center', marginTop: 40, fontSize: 14 },
-  replyingIndicator: { flexDirection: 'row', justifyContent: 'space-between', padding: 12, backgroundColor: colors.surface, borderTopWidth: 1, borderTopColor: colors.border },
-  replyingText: { color: colors.textMuted, fontSize: 13, fontWeight: '600' },
-  inputContainer: { flexDirection: 'row', alignItems: 'flex-end', padding: 12, backgroundColor: colors.background, borderTopWidth: 1, borderTopColor: colors.border },
-  input: { flex: 1, backgroundColor: colors.surface, color: colors.text, borderRadius: 20, paddingHorizontal: 16, paddingTop: 12, paddingBottom: 12, fontSize: 14, maxHeight: 100, borderWidth: 1, borderColor: colors.border },
-  sendButton: { width: 40, height: 40, borderRadius: 20, backgroundColor: colors.primary, justifyContent: 'center', alignItems: 'center', marginLeft: 10, marginBottom: 2 },
+  replyingIndicator: { flexDirection: 'row', justifyContent: 'space-between', paddingHorizontal: 16, paddingVertical: 12, backgroundColor: colors.surface },
+  replyingText: { color: colors.textMuted, fontSize: 12, fontWeight: '600' },
+  inputContainer: { flexDirection: 'row', alignItems: 'flex-end', paddingHorizontal: 16, paddingVertical: 12, backgroundColor: colors.background },
+  input: { flex: 1, backgroundColor: colors.surface, color: colors.text, borderRadius: 24, paddingHorizontal: 16, paddingTop: 12, paddingBottom: 12, fontSize: 15, maxHeight: 100 },
+  sendButton: { width: 44, height: 44, borderRadius: 22, backgroundColor: colors.primary, justifyContent: 'center', alignItems: 'center', marginLeft: 10 },
 });

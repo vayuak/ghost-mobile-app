@@ -10,7 +10,6 @@ import { initLocalDatabase, saveLocalMessage, getLocalMessages, markRoomAsRead, 
 import { useTheme } from '../context/ThemeContext'; 
 
 export let currentActiveChat = '';
-
 interface MessageItem { msgId?: string; sender_username: string; content: string; timestamp: string; undecryptable?: boolean; status?: 'pending' | 'sent' | 'delivered' | 'read' | 'failed'; }
 type CryptoState = 'checking' | 'ready' | 'peer-has-no-key' | 'key-changed' | 'error';
 
@@ -27,9 +26,7 @@ export default function GossipsChatScreen({ route, navigation }: any) {
   const [activeUser, setActiveUser] = useState('');
   const [targetAvatar, setTargetAvatar] = useState<string | null>(null);
   const [authToken, setAuthToken] = useState<string | null>(null); 
-
   const [cryptoState, setCryptoState] = useState<CryptoState>('checking');
-  const [lastError, setLastError] = useState<string | null>(null);
   const [keyboardHeight, setKeyboardHeight] = useState(0);
 
   const roomIdRef = useRef<string>('');
@@ -49,7 +46,6 @@ export default function GossipsChatScreen({ route, navigation }: any) {
   useEffect(() => {
     let isMounted = true;
     currentActiveChat = targetUser; 
-    
     AsyncStorage.getItem('@ghost_token').then(setAuthToken);
 
     const boot = async () => {
@@ -62,11 +58,8 @@ export default function GossipsChatScreen({ route, navigation }: any) {
         loadLocalHistory(roomIdRef.current);
 
         apiClient.get(API_ROUTES.USERS.PROFILE(targetUser)).then(res => {
-            // 🟢 FIX: Correct JSON depth parsing for chat avatars
             const rawAvatar = res?.profile?.avatarUrl || res?.profile?.profilePictureUrl || res?.avatarUrl;
-            if (isMounted && rawAvatar) {
-                setTargetAvatar(rawAvatar.startsWith('http') ? rawAvatar : `${BASE_URL.replace(/\/$/, '')}${rawAvatar.startsWith('/') ? rawAvatar : `/${rawAvatar}`}`);
-            }
+            if (isMounted && rawAvatar) setTargetAvatar(rawAvatar.startsWith('http') ? rawAvatar : `${BASE_URL.replace(/\/$/, '')}${rawAvatar.startsWith('/') ? rawAvatar : `/${rawAvatar}`}`);
         }).catch(() => {});
 
         try { await ensureKeysPublished(); } catch (e: any) { }
@@ -75,9 +68,9 @@ export default function GossipsChatScreen({ route, navigation }: any) {
           if (!isMounted) return;
           if (e instanceof KeyChangedError) setCryptoState('key-changed');
           else if (e instanceof NoKeyError) setCryptoState('peer-has-no-key');
-          else { setCryptoState('error'); setLastError(`Encryption Key Error: ${e?.message}`); }
+          else setCryptoState('error'); 
         }
-      } catch (e: any) { setLastError(e?.message || 'Unknown startup error.'); }
+      } catch (e: any) { }
     };
 
     boot();
@@ -98,7 +91,7 @@ export default function GossipsChatScreen({ route, navigation }: any) {
   const handleSend = () => {
     const text = chatInput.trim();
     if (!text) return;
-    if (cryptoState !== 'ready') return Alert.alert('Cannot encrypt', 'Encryption keys are not ready for this conversation.'); 
+    if (cryptoState !== 'ready') return Alert.alert('Cannot encrypt', 'Encryption keys are not ready.'); 
     setChatInput('');
     const msgId = `${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
     saveLocalMessage(roomIdRef.current, activeUserRef.current, text, null, null, targetUser, msgId, new Date().toISOString(), false, true, 'pending');
@@ -108,7 +101,7 @@ export default function GossipsChatScreen({ route, navigation }: any) {
   const handleChatOptions = () => {
     Alert.alert('Chat Options', `Manage conversation with @${targetUser}`, [
         { text: 'Clear Chat', onPress: () => { clearLocalMessages(roomIdRef.current, true, targetUser, activeUserRef.current); setMessages([]); }},
-        { text: 'Report User', onPress: () => { apiClient.post('/v1/social/moderation/report', { reportedUsername: targetUser, type: 'USER_REPORT' }).catch(()=>{}); Alert.alert('Reported', 'User has been reported to moderation team.'); }},
+        { text: 'Report User', onPress: () => { apiClient.post('/v1/social/moderation/report', { reportedUsername: targetUser, type: 'USER_REPORT' }).catch(()=>{}); Alert.alert('Reported', 'User reported.'); }},
         { text: 'Block User', style: 'destructive', onPress: () => { blockLocalUser(targetUser); navigation.navigate('MainTabs', { screen: 'Gossips' }); }},
         { text: 'Cancel', style: 'cancel' }
       ], { cancelable: true }
@@ -117,8 +110,7 @@ export default function GossipsChatScreen({ route, navigation }: any) {
 
   const formatTime = (iso: string) => {
     const d = new Date(iso); if (isNaN(d.getTime())) return '';
-    const today = new Date();
-    return d.toDateString() === today.toDateString() ? d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : `${d.toLocaleDateString([], { day: '2-digit', month: 'short' })} ${d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
+    return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   };
 
   const chatContent = (
@@ -134,9 +126,7 @@ export default function GossipsChatScreen({ route, navigation }: any) {
             const isMe = (item.sender_username || '').trim().toLowerCase() === activeUser;
             return (
               <TouchableOpacity 
-                key={item.msgId || i.toString()} 
-                style={[styles.row, isMe ? styles.rowMine : styles.rowTheirs]}
-                activeOpacity={1}
+                key={item.msgId || i.toString()} style={[styles.row, isMe ? styles.rowMine : styles.rowTheirs]} activeOpacity={1}
                 onLongPress={() => { if (isMe && item.status === 'failed' && item.msgId) { setMessageStatus(item.msgId, 'pending'); kickOutbox(); }}}
               >
                 <View style={[styles.bubble, isMe ? styles.bubbleMine : styles.bubbleTheirs]}>
@@ -163,10 +153,12 @@ export default function GossipsChatScreen({ route, navigation }: any) {
       )}
 
       <View style={[styles.composer, { paddingBottom: Math.max(insets.bottom, 10) }]}>
-        <TextInput style={styles.input} value={chatInput} onChangeText={setChatInput} placeholder={`Message @${targetUser}…`} placeholderTextColor={colors.textMuted} multiline />
-        <TouchableOpacity style={[styles.sendBtn, !chatInput.trim() && styles.sendBtnOff]} onPress={handleSend} disabled={!chatInput.trim()}>
-          <Feather name="send" size={18} color={chatInput.trim() ? '#FFF' : colors.textMuted} />
-        </TouchableOpacity>
+        <View style={styles.inputContainer}>
+          <TextInput style={styles.input} value={chatInput} onChangeText={setChatInput} placeholder={`Message...`} placeholderTextColor={colors.textMuted} multiline />
+          {chatInput.trim().length > 0 && (
+            <TouchableOpacity style={styles.sendIcon} onPress={handleSend}><Feather name="send" size={20} color={colors.primary} /></TouchableOpacity>
+          )}
+        </View>
       </View>
     </>
   );
@@ -185,15 +177,14 @@ export default function GossipsChatScreen({ route, navigation }: any) {
             <View style={{ flex: 1 }}><Text style={styles.peerName} numberOfLines={1}>@{targetUser || 'unknown'}</Text></View>
           </View>
         </View>
-        <TouchableOpacity onPress={handleChatOptions} hitSlop={{ top: 15, bottom: 15, left: 15, right: 15 }}>
-          <Feather name="more-vertical" size={20} color={colors.text} />
-        </TouchableOpacity>
+        <TouchableOpacity onPress={handleChatOptions} hitSlop={{ top: 15, bottom: 15, left: 15, right: 15 }}><Feather name="more-vertical" size={20} color={colors.text} /></TouchableOpacity>
       </View>
       {Platform.OS === 'ios' ? <KeyboardAvoidingView style={{ flex: 1 }} behavior="padding">{chatContent}</KeyboardAvoidingView> : <View style={{ flex: 1, paddingBottom: keyboardHeight }}>{chatContent}</View>}
     </View>
   );
 }
 
+// 🟢 FIX: Borderless, clean chat bubbles and input composer
 const getStyles = (colors: any, isDarkMode: boolean) => StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.background },
   header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16, paddingBottom: 12, paddingTop: 10, backgroundColor: colors.background, borderBottomWidth: 1, borderBottomColor: colors.border },
@@ -203,19 +194,19 @@ const getStyles = (colors: any, isDarkMode: boolean) => StyleSheet.create({
   avatarImg: { width: '100%', height: '100%' },
   avatarLetter: { color: colors.text, fontWeight: 'bold', fontSize: 15 },
   peerName: { fontSize: 16, fontWeight: '700', color: colors.text },
-  composer: { flexDirection: 'row', alignItems: 'flex-end', paddingHorizontal: 12, paddingTop: 10, backgroundColor: colors.background, borderTopWidth: 1, borderTopColor: colors.border },
-  input: { flex: 1, backgroundColor: colors.surface, borderRadius: 22, paddingHorizontal: 16, paddingTop: 11, paddingBottom: 11, color: colors.text, fontSize: 15, maxHeight: 110, minHeight: 44, borderWidth: 1, borderColor: colors.border },
-  sendBtn: { backgroundColor: colors.primary, width: 44, height: 44, borderRadius: 22, justifyContent: 'center', alignItems: 'center', marginLeft: 8 },
-  sendBtnOff: { backgroundColor: colors.surface },
+  composer: { backgroundColor: colors.background, paddingHorizontal: 12, paddingTop: 8 },
+  inputContainer: { flexDirection: 'row', alignItems: 'flex-end', backgroundColor: colors.surface, borderRadius: 24, paddingHorizontal: 16, paddingVertical: 8, minHeight: 48, maxHeight: 120 },
+  input: { flex: 1, color: colors.text, fontSize: 15, paddingTop: 6, paddingBottom: 6 },
+  sendIcon: { marginLeft: 12, marginBottom: 4, justifyContent: 'center', alignItems: 'center' },
   scrollArea: { flex: 1 },
-  row: { marginBottom: 10, flexDirection: 'row', width: '100%' },
+  row: { marginBottom: 12, flexDirection: 'row', width: '100%' },
   rowMine: { justifyContent: 'flex-end' },
   rowTheirs: { justifyContent: 'flex-start' },
-  bubble: { paddingHorizontal: 13, paddingVertical: 9, borderRadius: 16, maxWidth: '78%' },
-  bubbleMine: { backgroundColor: colors.primary, borderTopLeftRadius: 16, borderBottomLeftRadius: 16, borderTopRightRadius: 16, borderBottomRightRadius: 4, borderWidth: 1, borderColor: colors.primary },
-  bubbleTheirs: { backgroundColor: colors.surface, borderTopLeftRadius: 16, borderBottomRightRadius: 16, borderTopRightRadius: 16, borderBottomLeftRadius: 4, borderWidth: 1, borderColor: colors.border },
+  bubble: { paddingHorizontal: 14, paddingVertical: 10, borderRadius: 20, maxWidth: '78%' },
+  bubbleMine: { backgroundColor: colors.primary, borderBottomRightRadius: 4 },
+  bubbleTheirs: { backgroundColor: colors.surface, borderBottomLeftRadius: 4 },
   bubbleText: { fontSize: 15, lineHeight: 20, color: colors.text },
-  time: { fontSize: 9.5, color: colors.textMuted },
+  time: { fontSize: 10, color: colors.textMuted },
   empty: { alignItems: 'center', marginTop: 60, paddingHorizontal: 40 },
   emptyText: { color: colors.text, fontSize: 15, fontWeight: '800', marginTop: 14 }
 });

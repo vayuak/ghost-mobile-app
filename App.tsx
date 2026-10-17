@@ -30,7 +30,7 @@ const HTTPS_URL = process.env.EXPO_PUBLIC_API_BASE_URL;
 const Stack = createNativeStackNavigator();
 
 const linking: any = {
-  prefixes: [Linking.createURL('/'), 'glider://', HTTPS_URL],
+  prefixes: [Linking.createURL('/'), 'viacustos://', HTTPS_URL],
   config: {
     screens: {
       MainTabs: { screens: { Home: 'home', Gossips: 'chat', Profile: 'profile' } },

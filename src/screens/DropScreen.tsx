@@ -6,7 +6,7 @@ import * as Notifications from 'expo-notifications';
 import { useHighAccuracyLocation } from '../hooks/useHighAccuracyLocation';
 import { apiClient, API_ROUTES, BASE_URL } from '../services/api'; 
 import { peekAvatarUrl, preloadAvatars, toAbsoluteUrl } from '../services/ProfileCache'; 
-import { useTheme } from '../context/ThemeContext'; // 🟢 THEME ADDED
+import { useTheme } from '../context/ThemeContext'; 
 
 Notifications.setNotificationHandler({
   handleNotification: async () => ({ shouldShowAlert: true, shouldPlaySound: true, shouldSetBadge: true, shouldShowBanner: true, shouldShowList: true }),
@@ -227,7 +227,8 @@ const getStyles = (colors: any, isDarkMode: boolean) => StyleSheet.create({
   switchContainer: { flexDirection: 'row', alignItems: 'center' },
   switchLabel: { color: colors.textMuted, fontSize: 11, fontWeight: '800', marginRight: 8 },
   topInputContainer: { backgroundColor: colors.background, borderBottomWidth: 1, borderBottomColor: colors.border, flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingBottom: 12, paddingTop: 8 },
-  topInput: { flex: 1, backgroundColor: colors.surface, color: colors.text, borderRadius: 20, paddingHorizontal: 16, paddingTop: 10, paddingBottom: 10, fontSize: 15, borderWidth: 1, borderColor: colors.border, marginRight: 10, minHeight: 40, maxHeight: 100 },
+  // 🟢 FIX: Borderless, clean input field
+  topInput: { flex: 1, backgroundColor: colors.surface, color: colors.text, borderRadius: 20, paddingHorizontal: 16, paddingTop: 10, paddingBottom: 10, fontSize: 15, marginRight: 10, minHeight: 40, maxHeight: 100 },
   sendButton: { width: 40, height: 40, borderRadius: 20, backgroundColor: colors.text, justifyContent: 'center', alignItems: 'center' },
   sendButtonDisabled: { backgroundColor: colors.surface },
   listContent: { paddingHorizontal: 16, paddingTop: 16, paddingBottom: 16 },
@@ -239,8 +240,9 @@ const getStyles = (colors: any, isDarkMode: boolean) => StyleSheet.create({
   messageRowSelf: { justifyContent: 'flex-end' },
   messageRowOther: { justifyContent: 'flex-start' },
   bubble: { maxWidth: '80%', paddingHorizontal: 14, paddingVertical: 10, borderRadius: 18 },
-  bubbleSelf: { backgroundColor: colors.surface, borderTopLeftRadius: 18, borderBottomLeftRadius: 18, borderTopRightRadius: 18, borderBottomRightRadius: 4, borderWidth: 1, borderColor: colors.border },
-  bubbleOther: { backgroundColor: colors.surface, borderTopLeftRadius: 18, borderBottomRightRadius: 18, borderTopRightRadius: 18, borderBottomLeftRadius: 4, borderWidth: 1, borderColor: colors.border },
+  // 🟢 FIX: Pure color bubbles with subtle shadow, NO rigid borders
+  bubbleSelf: { backgroundColor: colors.surface, borderTopLeftRadius: 18, borderBottomLeftRadius: 18, borderTopRightRadius: 18, borderBottomRightRadius: 4, shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.05, shadowRadius: 2, elevation: 1 },
+  bubbleOther: { backgroundColor: colors.surface, borderTopLeftRadius: 18, borderBottomRightRadius: 18, borderTopRightRadius: 18, borderBottomLeftRadius: 4, shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.05, shadowRadius: 2, elevation: 1 },
   bubbleHeader: { flexDirection: 'row', alignItems: 'center', marginBottom: 6 },
   airdropAvatarImage: { width: 22, height: 22, borderRadius: 11, marginRight: 8, backgroundColor: colors.background },
   airdropAvatarFallback: { width: 22, height: 22, borderRadius: 11, backgroundColor: colors.background, justifyContent: 'center', alignItems: 'center', marginRight: 8 },

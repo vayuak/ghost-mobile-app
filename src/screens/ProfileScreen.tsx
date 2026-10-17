@@ -9,6 +9,7 @@ import Toast from 'react-native-toast-message';
 import { apiClient, BASE_URL, systemLogout, uploadMultipart, buildFilePart, API_ROUTES } from '../services/api'; 
 import PostCard from '../components/PostCard';
 import { useTheme } from '../context/ThemeContext';
+import { invalidateAvatar } from '../services/ProfileCache';
 
 export default function ProfileScreen({ navigation, onLogoutTrigger }: any) {
   const { colors, isDarkMode, toggleTheme } = useTheme();
@@ -25,6 +26,7 @@ export default function ProfileScreen({ navigation, onLogoutTrigger }: any) {
   const [authToken, setAuthToken] = useState<string | null>(null);
   const [currentUsername, setCurrentUsername] = useState<string>('loading...');
   const [uploadPercent, setUploadPercent] = useState<number | null>(null);
+  const [imageError, setImageError] = useState(false);
   
   const [visiblePosts, setVisiblePosts] = useState<string[]>([]);
   const viewabilityConfig = useRef({ itemVisiblePercentThreshold: 50 }).current;
@@ -38,10 +40,15 @@ export default function ProfileScreen({ navigation, onLogoutTrigger }: any) {
         try {
           const response = await apiClient.get(API_ROUTES.AUTH.ME);
           setCurrentUsername(response.username);
-          if (response.profilePictureUrl) setAvatarUri(response.profilePictureUrl);
+          if (response.profilePictureUrl) {
+            setAvatarUri(response.profilePictureUrl);
+            await AsyncStorage.setItem('@user_avatar', response.profilePictureUrl);
+          }
         } catch (error) {
           const savedUser = await AsyncStorage.getItem('@active_username');
+          const savedAvatar = await AsyncStorage.getItem('@user_avatar');
           if (savedUser) setCurrentUsername(savedUser);
+          if (savedAvatar) setAvatarUri(savedAvatar);
         }
       }
     };
@@ -67,27 +74,49 @@ export default function ProfileScreen({ navigation, onLogoutTrigger }: any) {
     setMenuVisible(false);
     await systemLogout();
     if (onLogoutTrigger) onLogoutTrigger();
-    else navigation.reset({ index: 0, routes: [{ name: 'Login' }] });
+    else { const parentNav = navigation.getParent(); if (parentNav) parentNav.reset({ index: 0, routes: [{ name: 'Login' }] }); else navigation.reset({ index: 0, routes: [{ name: 'Login' }] }); }
   };
 
   const handleEditProfileDP = async () => {
     const result = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['images'], allowsEditing: true, aspect: [1, 1], quality: 0.8 });
     if (result.canceled) return;
     const asset = result.assets[0];
-    setAvatarUri(asset.uri); setUploadPercent(0);
+    const previousAvatar = avatarUri;
+    setAvatarUri(asset.uri); setImageError(false); setUploadPercent(0);
     try {
       const formData = new FormData();
       const filePart = buildFilePart(asset);
       if (Platform.OS === 'web') { const res = await fetch(asset.uri); const blob = await res.blob(); formData.append('file', blob, filePart.name); } 
       else { formData.append('file', filePart); }
       const updateRes = await uploadMultipart(API_ROUTES.USERS.UPDATE_DP, formData, setUploadPercent);
-      if (updateRes?.profilePictureUrl) setAvatarUri(updateRes.profilePictureUrl);
-      Toast.show({ type: 'success', text1: 'Success', text2: 'Profile picture updated.' });
-    } catch (e: any) { Toast.show({ type: 'error', text1: 'Upload Failed', text2: e.message }); } 
+      const newAvatarUrl = updateRes?.avatarUrl || updateRes?.profilePictureUrl || updateRes?.url;
+      if (newAvatarUrl) {
+        setAvatarUri(newAvatarUrl);
+        await AsyncStorage.setItem('@user_avatar', newAvatarUrl);
+        if (currentUsername) await invalidateAvatar(currentUsername);
+      }
+      Toast.show({ type: 'success', text1: 'Success', text2: 'Profile picture updated globally.' });
+    } catch (e: any) { 
+      setAvatarUri(previousAvatar);
+      Toast.show({ type: 'error', text1: 'Upload Failed', text2: e.message || "Could not update profile picture." }); 
+    } 
     finally { setUploadPercent(null); }
   };
 
-  const getFullAvatarUrl = (uri: string | null) => uri ? (uri.startsWith('http') ? uri : `${BASE_URL.replace(/\/$/, '')}${uri.startsWith('/') ? uri : `/${uri}`}`) : null;
+  const handleDeletePost = async (postId: any) => {
+    try {
+      await apiClient.delete(API_ROUTES.POSTS.DELETE(postId));
+      setUserPosts(current => current.filter(post => String(post.id) !== String(postId)));
+      Toast.show({ type: 'success', text1: 'Success', text2: 'Post permanently deleted.' });
+    } catch (e: any) { Toast.show({ type: 'error', text1: 'Delete Failed', text2: e.message || "An unknown network error occurred." }); }
+  };
+
+  const getFullAvatarUrl = (uri: string | null) => {
+    if (!uri) return null;
+    if (uri.startsWith('http://') || uri.startsWith('https://') || uri.startsWith('file://')) return uri;
+    return `${BASE_URL.replace(/\/$/, '')}${uri.startsWith('/') ? uri : `/${uri}`}`;
+  };
+
   const fullAvatarUrl = getFullAvatarUrl(avatarUri);
 
   return (
@@ -111,16 +140,24 @@ export default function ProfileScreen({ navigation, onLogoutTrigger }: any) {
           <View style={styles.profileHeaderContainer}>
             <View style={styles.avatarWrapper}>
               <View style={styles.avatarGlow}>
-                {fullAvatarUrl ? <Image source={{ uri: fullAvatarUrl, headers: authToken ? { Authorization: `Bearer ${authToken}` } : undefined }} style={styles.avatarImage} /> : <Feather name="user" size={48} color={colors.textMuted} />}
+                {fullAvatarUrl && !imageError ? (
+                  <Image source={{ uri: fullAvatarUrl, headers: authToken ? { Authorization: `Bearer ${authToken}` } : undefined }} style={styles.avatarImage} onError={() => setImageError(true)} />
+                ) : (
+                  <Feather name="user" size={48} color={colors.textMuted} />
+                )}
               </View>
-              <TouchableOpacity style={styles.cameraBadge} onPress={handleEditProfileDP} disabled={uploadPercent !== null}><Ionicons name="camera" size={14} color="#FFF" /></TouchableOpacity>
+              {/* 🟢 Elegant Cutout Camera Badge */}
+              <TouchableOpacity style={styles.cameraBadge} onPress={handleEditProfileDP} disabled={uploadPercent !== null}>
+                <Ionicons name="camera" size={14} color="#FFF" />
+              </TouchableOpacity>
             </View>
             {uploadPercent !== null && <Text style={styles.uploadText}>Uploading {uploadPercent}%</Text>}
             <View style={styles.identityContainer}><Text style={styles.usernameText}>@{currentUsername}</Text></View>
             <View style={styles.sectionHeader}><Text style={styles.sectionTitle}>MY POSTS</Text></View>
           </View>
         }
-        renderItem={({ item }) => <PostCard post={item} currentUsername={currentUsername} isVisible={visiblePosts.includes(String(item.id)) && !menuVisible && isFocused} onCommentTap={() => navigation.navigate('SinglePost', { postId: item.id })} />}
+        renderItem={({ item }) => <PostCard post={item} currentUsername={currentUsername} onDelete={handleDeletePost} isVisible={visiblePosts.includes(String(item.id)) && !menuVisible && isFocused} onCommentTap={() => navigation.navigate('SinglePost', { postId: item.id })} />}
+        ListEmptyComponent={<Text style={{ color: colors.textMuted, textAlign: 'center', marginTop: 30 }}>No posts yet.</Text>}
       />
 
       <Modal visible={menuVisible} animationType="slide" transparent={true} onRequestClose={() => setMenuVisible(false)}>
@@ -129,7 +166,6 @@ export default function ProfileScreen({ navigation, onLogoutTrigger }: any) {
           <View style={styles.modalContent}>
             <Text style={styles.menuSectionHeader}>PREFERENCES</Text>
             
-            {/* 🟢 THEME TOGGLE ADDED BACK */}
             <View style={styles.menuItemRow}>
               <Text style={styles.menuText}>Dark Theme</Text>
               <Switch value={isDarkMode} onValueChange={toggleTheme} trackColor={{ false: colors.border, true: colors.primary }} />
@@ -140,8 +176,27 @@ export default function ProfileScreen({ navigation, onLogoutTrigger }: any) {
               <Feather name="chevron-right" size={18} color="#FBBF24" />
             </TouchableOpacity>
 
-            <Text style={[styles.menuSectionHeader, { marginTop: 16 }]}>SUPPORT & LEGAL</Text>
-            <TouchableOpacity style={styles.menuItemRow} onPress={() => Linking.openURL('https://viacustos.com/terms')}><Text style={styles.menuText}>Terms & Privacy</Text></TouchableOpacity>
+            <Text style={[styles.menuSectionHeader, { marginTop: 16 }]}>SUPPORT & HELP</Text>
+            <TouchableOpacity style={styles.menuItemRow} onPress={() => Linking.openURL('https://viacustos.com')}>
+              <Text style={styles.menuText}>Report a Bug</Text>
+              <Feather name="external-link" size={16} color={colors.textMuted} />
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.menuItemRow} onPress={() => Linking.openURL('https://viacustos.com')}>
+              <Text style={styles.menuText}>Suggest a Feature</Text>
+              <Feather name="external-link" size={16} color={colors.textMuted} />
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.menuItemRow} onPress={() => Linking.openURL('https://viacustos.com')}>
+              <Text style={styles.menuText}>Help & FAQ</Text>
+              <Feather name="help-circle" size={16} color={colors.textMuted} />
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.menuItemRow} onPress={() => { setMenuVisible(false); navigation.navigate('BlockedUsers'); }}>
+              <Text style={styles.menuText}>Blocked Users</Text>
+              <Feather name="shield" size={16} color={colors.textMuted} />
+            </TouchableOpacity>
+
+            <Text style={[styles.menuSectionHeader, { marginTop: 16 }]}>LEGAL</Text>
+            <TouchableOpacity style={styles.menuItemRow} onPress={() => Linking.openURL('https://viacustos.com/terms')}><Text style={styles.menuText}>Terms of Service</Text></TouchableOpacity>
+            <TouchableOpacity style={styles.menuItemRow} onPress={() => Linking.openURL('https://viacustos.com/privacy')}><Text style={styles.menuText}>Privacy Policy</Text></TouchableOpacity>
 
             <TouchableOpacity style={[styles.menuItemRow, { marginTop: 20 }]} onPress={handleLogout}>
               <Feather name="log-out" size={18} color={colors.danger} /><Text style={[styles.menuText, { color: colors.danger, marginLeft: 10 }]}>Logout</Text>
@@ -160,9 +215,10 @@ const getStyles = (colors: any) => StyleSheet.create({
   iconButton: { width: 38, height: 38, borderRadius: 19, backgroundColor: colors.surface, justifyContent: 'center', alignItems: 'center', borderWidth: 1, borderColor: colors.border },
   profileHeaderContainer: { alignItems: 'center', paddingTop: 10, paddingHorizontal: 20 },
   avatarWrapper: { position: 'relative', marginBottom: 15 },
-  avatarGlow: { width: 104, height: 104, borderRadius: 52, borderWidth: 1, borderColor: colors.border, justifyContent: 'center', alignItems: 'center', backgroundColor: colors.surface, overflow: 'hidden' },
+  avatarGlow: { width: 104, height: 104, borderRadius: 52, justifyContent: 'center', alignItems: 'center', backgroundColor: colors.surface, overflow: 'hidden' },
   avatarImage: { width: '100%', height: '100%' },
-  cameraBadge: { position: 'absolute', bottom: 2, right: 2, backgroundColor: colors.surface, width: 32, height: 32, borderRadius: 16, justifyContent: 'center', alignItems: 'center', borderWidth: 1, borderColor: colors.border },
+  // 🟢 Elegant Cutout Style
+  cameraBadge: { position: 'absolute', bottom: 0, right: 0, backgroundColor: colors.primary, width: 32, height: 32, borderRadius: 16, justifyContent: 'center', alignItems: 'center', borderWidth: 3, borderColor: colors.background, shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.2, shadowRadius: 3, elevation: 4 },
   uploadText: { color: colors.textMuted, fontSize: 12, fontWeight: '700', marginBottom: 10, letterSpacing: 1 },
   identityContainer: { alignItems: 'center', marginBottom: 20 },
   usernameText: { color: colors.text, fontSize: 22, fontWeight: '800', letterSpacing: 0.5, marginBottom: 6 },

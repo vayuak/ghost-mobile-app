@@ -27,11 +27,8 @@ export default function GossipsInboxScreen({ navigation }: any) {
 
   const loadInbox = () => {
     if (!activeUser) return;
-    try {
-      const t = getRecentConversations(activeUser);
-      setThreads(t);
-      hydrateAvatars(t.map(x => x.targetUser));
-    } finally { setIsLoading(false); }
+    try { setThreads(getRecentConversations(activeUser)); hydrateAvatars(getRecentConversations(activeUser).map(x => x.targetUser)); } 
+    finally { setIsLoading(false); }
   };
 
   const hydrateAvatars = async (usernames: string[]) => {
@@ -40,13 +37,8 @@ export default function GossipsInboxScreen({ navigation }: any) {
       if (avatars[user]) continue; 
       try {
         const response = await apiClient.get(API_ROUTES.USERS.PROFILE(user));
-        // 🟢 FIX: Handle both direct structure and deep object structure
         const rawUrl = response?.profile?.avatarUrl || response?.profile?.profilePictureUrl || response?.avatarUrl;
-        
-        if (rawUrl) {
-          const fullUrl = rawUrl.startsWith('http') ? rawUrl : `${BASE_URL.replace(/\/$/, '')}${rawUrl.startsWith('/') ? rawUrl : `/${rawUrl}`}`;
-          setAvatars(prev => ({ ...prev, [user]: fullUrl }));
-        }
+        if (rawUrl) setAvatars(prev => ({ ...prev, [user]: rawUrl.startsWith('http') ? rawUrl : `${BASE_URL.replace(/\/$/, '')}${rawUrl.startsWith('/') ? rawUrl : `/${rawUrl}`}` }));
       } catch (e) { }
     }
   };
@@ -69,30 +61,7 @@ export default function GossipsInboxScreen({ navigation }: any) {
 
   const formatTime = (iso: string) => {
     const d = new Date(iso); if (isNaN(d.getTime())) return '';
-    const today = new Date();
-    return d.toDateString() === today.toDateString() ? d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : d.toLocaleDateString([], { day: '2-digit', month: 'short' });
-  };
-
-  const renderItem = ({ item }: { item: InboxThread }) => {
-    const avatarUrl = avatars[item.targetUser];
-    return (
-      <TouchableOpacity style={styles.threadRow} onPress={() => navigation.navigate('GossipsChat', { targetUser: item.targetUser })} onLongPress={() => handleLongPress(item.roomId, item.targetUser)}>
-        <TouchableOpacity style={styles.avatarContainer} onPress={() => navigation.navigate('PublicProfile', { targetUser: item.targetUser })}>
-          {avatarUrl ? (
-            <Image source={{ uri: avatarUrl, headers: authToken ? { Authorization: `Bearer ${authToken}` } : undefined }} style={styles.avatarImage} />
-          ) : (
-            <View style={styles.avatarPlaceholder}><Text style={styles.avatarLetter}>{item.targetUser ? item.targetUser[0].toUpperCase() : '?'}</Text></View>
-          )}
-        </TouchableOpacity>
-        <View style={styles.threadContent}>
-          <View style={styles.threadHeader}><Text style={styles.threadUsername} numberOfLines={1}>@{item.targetUser}</Text><Text style={styles.threadTime}>{formatTime(item.timestamp)}</Text></View>
-          <View style={styles.threadFooter}>
-            <Text style={[styles.threadLastMessage, item.unreadCount > 0 && styles.threadLastMessageUnread]} numberOfLines={1}>{item.lastMessage}</Text>
-            {item.unreadCount > 0 && <View style={styles.unreadBadge}><Text style={styles.unreadBadgeText}>{item.unreadCount}</Text></View>}
-          </View>
-        </View>
-      </TouchableOpacity>
-    );
+    const today = new Date(); return d.toDateString() === today.toDateString() ? d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : d.toLocaleDateString([], { day: '2-digit', month: 'short' });
   };
 
   return (
@@ -103,13 +72,27 @@ export default function GossipsInboxScreen({ navigation }: any) {
       </View>
 
       {isLoading ? <ActivityIndicator size="large" color={colors.textMuted} style={{ marginTop: 50 }} /> : (
-        <FlatList data={threads} keyExtractor={(item) => item.roomId} renderItem={renderItem} contentContainerStyle={{ paddingBottom: 20 }}
+        <FlatList data={threads} keyExtractor={(item) => item.roomId} contentContainerStyle={{ paddingBottom: 20 }}
+          renderItem={({ item }) => {
+            const avatarUrl = avatars[item.targetUser];
+            return (
+              <TouchableOpacity style={styles.threadRow} onPress={() => navigation.navigate('GossipsChat', { targetUser: item.targetUser })} onLongPress={() => handleLongPress(item.roomId, item.targetUser)}>
+                <TouchableOpacity style={styles.avatarContainer} onPress={() => navigation.navigate('PublicProfile', { targetUser: item.targetUser })}>
+                  {avatarUrl ? <Image source={{ uri: avatarUrl, headers: authToken ? { Authorization: `Bearer ${authToken}` } : undefined }} style={styles.avatarImage} /> : <View style={styles.avatarPlaceholder}><Text style={styles.avatarLetter}>{item.targetUser ? item.targetUser[0].toUpperCase() : '?'}</Text></View>}
+                </TouchableOpacity>
+                <View style={styles.threadContent}>
+                  <View style={styles.threadHeader}><Text style={styles.threadUsername} numberOfLines={1}>@{item.targetUser}</Text><Text style={styles.threadTime}>{formatTime(item.timestamp)}</Text></View>
+                  <View style={styles.threadFooter}>
+                    <Text style={[styles.threadLastMessage, item.unreadCount > 0 && styles.threadLastMessageUnread]} numberOfLines={1}>{item.lastMessage}</Text>
+                    {/* 🟢 FIX: Exact WhatsApp Badge Styling */}
+                    {item.unreadCount > 0 && <View style={styles.unreadBadge}><Text style={styles.unreadBadgeText}>{item.unreadCount}</Text></View>}
+                  </View>
+                </View>
+              </TouchableOpacity>
+            );
+          }}
           ListEmptyComponent={
-            <View style={styles.emptyContainer}>
-              <Feather name="message-circle" size={50} color={colors.border} />
-              <Text style={styles.emptyTitle}>No Chats Yet</Text>
-              <Text style={styles.emptySub}>Search for users to start an encrypted conversation.</Text>
-            </View>
+            <View style={styles.emptyContainer}><Feather name="message-circle" size={50} color={colors.border} /><Text style={styles.emptyTitle}>No Chats Yet</Text><Text style={styles.emptySub}>Search for users to start an encrypted conversation.</Text></View>
           }
         />
       )}
@@ -117,24 +100,25 @@ export default function GossipsInboxScreen({ navigation }: any) {
   );
 }
 
+// 🟢 FIX: Removed `borderBottomWidth` from threadRow
 const getStyles = (colors: any) => StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.background },
-  header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 20, paddingVertical: 15, borderBottomWidth: 1, borderBottomColor: colors.border },
-  headerTitle: { color: colors.text, fontSize: 18, fontWeight: '900', letterSpacing: 1 },
-  threadRow: { flexDirection: 'row', paddingHorizontal: 16, paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: colors.border },
+  header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 20, paddingVertical: 15, backgroundColor: colors.background },
+  headerTitle: { color: colors.text, fontSize: 20, fontWeight: '800', letterSpacing: 1 },
+  threadRow: { flexDirection: 'row', paddingHorizontal: 16, paddingVertical: 12 }, 
   avatarContainer: { marginRight: 14 },
-  avatarImage: { width: 50, height: 50, borderRadius: 25, backgroundColor: colors.surface },
-  avatarPlaceholder: { width: 50, height: 50, borderRadius: 25, backgroundColor: colors.surface, justifyContent: 'center', alignItems: 'center' },
-  avatarLetter: { color: colors.text, fontSize: 18, fontWeight: 'bold' },
-  threadContent: { flex: 1, justifyContent: 'center' },
+  avatarImage: { width: 56, height: 56, borderRadius: 28, backgroundColor: colors.surface },
+  avatarPlaceholder: { width: 56, height: 56, borderRadius: 28, backgroundColor: colors.surface, justifyContent: 'center', alignItems: 'center' },
+  avatarLetter: { color: colors.text, fontSize: 20, fontWeight: 'bold' },
+  threadContent: { flex: 1, justifyContent: 'center', paddingBottom: 4 }, 
   threadHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 4 },
   threadUsername: { color: colors.text, fontSize: 16, fontWeight: '700', flex: 1, paddingRight: 10 },
   threadTime: { color: colors.textMuted, fontSize: 12, fontWeight: '500' },
   threadFooter: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   threadLastMessage: { color: colors.textMuted, fontSize: 14, flex: 1, paddingRight: 15 },
   threadLastMessageUnread: { color: colors.text, fontWeight: '600' },
-  unreadBadge: { backgroundColor: colors.primary, paddingHorizontal: 7, paddingVertical: 2, borderRadius: 10, minWidth: 20, alignItems: 'center' },
-  unreadBadgeText: { color: '#FFF', fontSize: 11, fontWeight: '800' },
+  unreadBadge: { backgroundColor: '#25D366', paddingHorizontal: 7, paddingVertical: 2, borderRadius: 10, minWidth: 22, alignItems: 'center' },
+  unreadBadgeText: { color: '#FFF', fontSize: 11, fontWeight: 'bold' },
   emptyContainer: { alignItems: 'center', justifyContent: 'center', marginTop: '40%' },
   emptyTitle: { color: colors.text, fontSize: 18, fontWeight: '800', marginTop: 16 },
   emptySub: { color: colors.textMuted, fontSize: 14, marginTop: 8, textAlign: 'center', paddingHorizontal: 40 }
