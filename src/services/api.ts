@@ -27,7 +27,8 @@ const safeParam = (param: string | number | undefined | null) => {
   return encodeURIComponent(str || 'unknown');
 };
 
-// 🟢 CENTRALIZED API ROUTE DICTIONARY
+// Replace your existing API_ROUTES dictionary with this one:
+
 export const API_ROUTES = {
   AUTH: {
     LOGIN: '/v1/auth/login',
@@ -44,31 +45,35 @@ export const API_ROUTES = {
   CAMPFIRE: {
     SCAN: '/v1/campfire/scan',
     DROP: '/v1/campfire/drop',
-    REPORT: (username: string) => `/v1/campfire/report/${safeParam(username)}`,
     PING_LOCATION: '/v1/campfire/ping-location',
-  },
-  SEARCH: {
-    FEED: (city: string, page: number = 0, size: number = 20) => `/v1/social/feed?city=${safeParam(city)}&page=${page}&size=${size}`,
-    DISCOVER: (keyword: string) => `/v1/social/search?keyword=${safeParam(keyword)}`,
+    REPORT: (username: string) => `/v1/campfire/report/${safeParam(username)}`,
   },
   SOCIAL: {
     CITIES: '/v1/social/meta/tier-one-cities',
+    FEED: (city: string, page: number = 0, size: number = 20) => `/v1/social/feed?city=${safeParam(city)}&page=${page}&size=${size}`,
+    DISCOVER: (keyword: string) => `/v1/social/search?keyword=${safeParam(keyword)}`,
     CREATE_POST: '/v1/social/post/upload-and-create',
-    USER_PROFILE: (username: string) => `/v1/social/user/${safeParam(username)}/profile`,
   },
-  PROFILE: {
-    MY_POSTS: '/v1/social/post/my-posts',
+  USERS: {
+    PROFILE: (username: string) => `/v1/social/user/${safeParam(username)}/full-profile`,
     UPDATE_DP: '/v1/social/user/profile/upload-and-update',
-    DELETE_POST: (postId: string | number) => `/v1/social/post/${postId}/delete`,
-    USER_POSTS: (username: string) => `/v1/social/post/user/${safeParam(username)}`,
   },
-  POST: {
+  POSTS: {
     GET_SINGLE: (postId: string | number) => `/v1/social/post/${safeParam(postId)}`,
+    DELETE: (postId: string | number) => `/v1/social/post/${postId}/delete`,
     VOTE: (postId: string | number, direction: string) => `/v1/social/post/${safeParam(postId)}/vote?direction=${direction}`,
     GET_COMMENTS: (postId: string | number, timestamp: number) => `/v1/social/post/${safeParam(postId)}/comments?t=${timestamp}`,
     CREATE_COMMENT: (postId: string | number) => `/v1/social/post/${safeParam(postId)}/comment`,
-    DELETE_COMMENT: (commentId: string | number) => `/v1/social/post/comment/${safeParam(commentId)}`,
-  }
+  },
+  COMMENTS: {
+    DELETE: (commentId: string | number) => `/v1/social/post/comment/${safeParam(commentId)}`,
+  },
+  MODERATION: {
+    REPORT: '/v1/social/moderation/report',
+  },
+  BILLING: {
+    INITIATE_CHECKOUT: '/v1/social/billing/checkout/initiate',
+  },
 };
 
 let onSessionExpiredCallback: (() => void) | null = null;

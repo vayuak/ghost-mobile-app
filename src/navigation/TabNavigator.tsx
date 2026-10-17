@@ -80,7 +80,7 @@ export default function TabNavigator({ onLogoutTrigger }: { onLogoutTrigger: () 
         {(props) => <DropsScreen {...props} onUnreadCountChange={setUnreadDrops} />}
       </Tab.Screen>
 
-      <Tab.Screen name="Create" component={CreateDirectiveScreen} options={{ tabBarLabel: 'Create Post' }} />
+      <Tab.Screen name="Create" component={CreateDirectiveScreen} options={{ tabBarLabel: 'Create' }} />
 
       <Tab.Screen
         name="Gossips"

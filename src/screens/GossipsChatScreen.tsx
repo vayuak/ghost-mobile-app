@@ -33,7 +33,6 @@ export default function GossipsChatScreen({ route, navigation }: any) {
 
   const [cryptoState, setCryptoState] = useState<CryptoState>('checking');
   const [lastError, setLastError] = useState<string | null>(null);
-
   const [keyboardHeight, setKeyboardHeight] = useState(0);
 
   const roomIdRef = useRef<string>('');
@@ -50,9 +49,7 @@ export default function GossipsChatScreen({ route, navigation }: any) {
         setKeyboardHeight(e.endCoordinates.height);
         scrollToEnd(true);
       });
-      const hideSubscription = Keyboard.addListener('keyboardDidHide', () => {
-        setKeyboardHeight(0);
-      });
+      const hideSubscription = Keyboard.addListener('keyboardDidHide', () => setKeyboardHeight(0));
       return () => {
         showSubscription.remove();
         hideSubscription.remove();
@@ -77,7 +74,7 @@ export default function GossipsChatScreen({ route, navigation }: any) {
 
         loadLocalHistory(roomIdRef.current);
 
-        apiClient.get(API_ROUTES.SOCIAL.USER_PROFILE(targetUser)).then(res => {
+        apiClient.get(API_ROUTES.USERS.PROFILE(targetUser)).then(res => {
             if (isMounted && (res?.avatarUrl || res?.profilePictureUrl)) {
                 const rawAvatar = res.avatarUrl || res.profilePictureUrl;
                 setTargetAvatar(rawAvatar.startsWith('http') ? rawAvatar : `${BASE_URL.replace(/\/$/, '')}${rawAvatar.startsWith('/') ? rawAvatar : `/${rawAvatar}`}`);
@@ -116,7 +113,6 @@ export default function GossipsChatScreen({ route, navigation }: any) {
     };
   }, [targetUser]);
 
-  // 🟢 FIX: Relies purely on LocalDB and emits "Read" receipts automatically
   const loadLocalHistory = (roomId: string) => {
     try {
       const unread = getUnreadIncomingIds(roomId, activeUserRef.current);
@@ -129,7 +125,6 @@ export default function GossipsChatScreen({ route, navigation }: any) {
     }
   };
 
-  // 🟢 FIX: Uses Outbox pattern rather than manual optimistic merging
   const handleSend = () => {
     const text = chatInput.trim();
     if (!text) return;
@@ -146,25 +141,26 @@ export default function GossipsChatScreen({ route, navigation }: any) {
   };
 
   const handleChatOptions = () => {
-    Alert.alert('Chat Options', `Manage conversation with @${targetUser}`, [
-      { text: 'Clear Chat', onPress: () => {
-          clearLocalMessages(roomIdRef.current, true, targetUser, activeUserRef.current);
-          setMessages([]);
-      }},
-      { text: 'Delete Chat', style: 'destructive', onPress: () => {
-          clearLocalMessages(roomIdRef.current, false);
-          navigation.navigate('MainTabs', { screen: 'Gossips' });
-      }},
-      { text: 'Block User', style: 'destructive', onPress: () => {
-          blockLocalUser(targetUser);
-          navigation.navigate('MainTabs', { screen: 'Gossips' });
-      }},
-      { text: 'Report User', onPress: () => {
-          apiClient.post('/v1/social/moderation/report', { targetUser, type: 'USER_REPORT' }).catch(()=>{});
-          Alert.alert('Reported', 'User has been reported for review.');
-      }},
-      { text: 'Cancel', style: 'cancel' }
-    ]);
+    Alert.alert(
+      'Chat Options', 
+      `Manage conversation with @${targetUser}`, 
+      [
+        { text: 'Clear Chat', onPress: () => {
+            clearLocalMessages(roomIdRef.current, true, targetUser, activeUserRef.current);
+            setMessages([]);
+        }},
+        { text: 'Report User', onPress: () => {
+            apiClient.post('/v1/social/moderation/report', { reportedUsername: targetUser, type: 'USER_REPORT' }).catch(()=>{});
+            Alert.alert('Reported', 'User has been reported to moderation team.');
+        }},
+        { text: 'Block User', style: 'destructive', onPress: () => {
+            blockLocalUser(targetUser);
+            navigation.navigate('MainTabs', { screen: 'Gossips' });
+        }},
+        { text: 'Cancel', style: 'cancel' }
+      ],
+      { cancelable: true }
+    );
   };
 
   const formatTime = (iso: string) => {
@@ -192,7 +188,6 @@ export default function GossipsChatScreen({ route, navigation }: any) {
                 key={item.msgId || i.toString()} 
                 style={[styles.row, isMe ? styles.rowMine : styles.rowTheirs]}
                 activeOpacity={1}
-                // 🟢 FIX: Allow manual retry of failed outbox messages
                 onLongPress={() => {
                   if (isMe && item.status === 'failed' && item.msgId) {
                     setMessageStatus(item.msgId, 'pending');
@@ -204,7 +199,6 @@ export default function GossipsChatScreen({ route, navigation }: any) {
                   <Text style={styles.bubbleText}>{item.content}</Text>
                   <View style={{ flexDirection: 'row', justifyContent: 'flex-end', alignItems: 'center', marginTop: 3 }}>
                     <Text style={styles.time}>{formatTime(item.timestamp)}</Text>
-                    {/* 🟢 FIX: WhatsApp Style Message Ticks */}
                     {isMe && (
                       <Text style={{ fontSize: 10, marginLeft: 4, color: item.status === 'read' ? '#34B7F1' : item.status === 'failed' ? '#FF4444' : 'rgba(255,255,255,0.4)' }}>
                         {item.status === 'pending' ? '🕓' : item.status === 'sent' ? '✓' : (item.status === 'delivered' || item.status === 'read') ? '✓✓' : item.status === 'failed' ? '!' : ''}
@@ -218,7 +212,6 @@ export default function GossipsChatScreen({ route, navigation }: any) {
         )}
       </ScrollView>
       
-      {/* 🟢 FIX: Key Change Banner to accept new security keys */}
       {cryptoState === 'key-changed' && (
         <TouchableOpacity onPress={async () => { await acceptPeerKeyChange(targetUser); setCryptoState('ready'); resync(); }}
           style={{ padding: 10, backgroundColor: '#332701' }}>

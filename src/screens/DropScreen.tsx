@@ -303,7 +303,7 @@ export const DropsScreen: React.FC<DropsScreenProps> = ({ onUnreadCountChange, n
         <View>
           <Text style={styles.title}>AirDrops</Text>
           <Text style={styles.subtitle}>
-            {isRadarActive ? coords ? `Radar Active • 50m Radius` : 'Acquiring GPS...' : 'Radar Disabled'}
+            {isRadarActive ? coords ? `Radar Active • 100m Radius` : 'Acquiring GPS...' : 'Radar Disabled'}
           </Text>
         </View>
         <View style={styles.switchContainer}>
@@ -345,7 +345,7 @@ export const DropsScreen: React.FC<DropsScreenProps> = ({ onUnreadCountChange, n
           >
             <View style={styles.emptyContainer}>
               <Feather name={isRadarActive ? 'radio' : 'power'} size={32} color="#404040" style={{ marginBottom: 12 }} />
-              <Text style={styles.emptyText}>{isRadarActive ? 'No AirDrops nearby (50m)' : 'AirDrop is turned off'}</Text>
+              <Text style={styles.emptyText}>{isRadarActive ? 'No AirDrops nearby (100m)' : 'AirDrop is turned off'}</Text>
               <Text style={styles.emptySubText}>
                 {isRadarActive ? 'Type above to drop a message in this area.' : 'Toggle the switch at top right to start receiving local drops.'}
               </Text>

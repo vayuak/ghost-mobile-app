@@ -55,13 +55,31 @@ export const initLocalDatabase = () => {
 
   initialized = true;
 };
+// Inside LocalDB.ts
 
 export const blockLocalUser = (username: string) => {
   if (isWeb) return;
   initLocalDatabase();
   db.runSync(`INSERT OR IGNORE INTO blocked_users (username) VALUES (?)`, [username.trim().toLowerCase()]);
+  DeviceEventEmitter.emit('db_chats_updated'); // 🟢 Added Event Emitter
 };
-
+export const unblockLocalUser = (username: string) => {
+  if (isWeb) return;
+  initLocalDatabase();
+  db.runSync(`DELETE FROM blocked_users WHERE username = ?`, [username.trim().toLowerCase()]);
+  DeviceEventEmitter.emit('db_chats_updated'); // 🟢 Added Event Emitter
+};
+// 🟢 NEW: Fetch all blocked users for the BlockedUsersScreen
+export const getBlockedUsers = (): string[] => {
+  if (isWeb) return [];
+  initLocalDatabase();
+  try {
+    const rows: any[] = db.getAllSync(`SELECT username FROM blocked_users ORDER BY blocked_at DESC`);
+    return rows.map((r: any) => r.username);
+  } catch {
+    return [];
+  }
+};
 export const isUserBlocked = (username: string): boolean => {
   if (isWeb || !username) return false;
   initLocalDatabase();

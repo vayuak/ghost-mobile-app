@@ -1,6 +1,6 @@
 import React, { useState, useCallback, useEffect } from 'react';
 import { useFocusEffect } from '@react-navigation/native';
-import { StyleSheet, Text, View, TouchableOpacity, FlatList, Image, Modal, RefreshControl, Platform } from 'react-native';
+import { StyleSheet, Text, View, TouchableOpacity, FlatList, Image, Modal, RefreshControl, Platform, Switch, Linking, Alert } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Feather, Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
@@ -20,6 +20,9 @@ export default function ProfileScreen({ navigation, onLogoutTrigger }: any) {
   const [currentUsername, setCurrentUsername] = useState<string>('loading...');
   const [uploadPercent, setUploadPercent] = useState<number | null>(null);
   const [imageError, setImageError] = useState(false);
+  
+  const [isDarkMode, setIsDarkMode] = useState(true);
+  const APP_VERSION = "1.0.0 (Build 102)";
 
   useEffect(() => {
     const loadSessionData = async () => {
@@ -35,7 +38,6 @@ export default function ProfileScreen({ navigation, onLogoutTrigger }: any) {
             await AsyncStorage.setItem('@user_avatar', response.profilePictureUrl);
           }
         } catch (error) {
-          console.error("Failed to load user profile:", error);
           const savedUser = await AsyncStorage.getItem('@active_username');
           const savedAvatar = await AsyncStorage.getItem('@user_avatar');
           if (savedUser) setCurrentUsername(savedUser);
@@ -58,7 +60,6 @@ export default function ProfileScreen({ navigation, onLogoutTrigger }: any) {
       if (!activeUser) return;
       
       const response = await apiClient.get(`/v1/social/user/${encodeURIComponent(activeUser)}/full-profile`);
-      
       setUserPosts(response.posts || []);
       
       if (response.profile?.profilePictureUrl) {
@@ -121,7 +122,7 @@ export default function ProfileScreen({ navigation, onLogoutTrigger }: any) {
       }
 
       const updateRes = await uploadMultipart(
-        API_ROUTES.PROFILE.UPDATE_DP,
+        API_ROUTES.USERS.UPDATE_DP,
         formData,
         setUploadPercent
       );
@@ -131,8 +132,6 @@ export default function ProfileScreen({ navigation, onLogoutTrigger }: any) {
       if (newAvatarUrl) {
         setAvatarUri(newAvatarUrl);
         await AsyncStorage.setItem('@user_avatar', newAvatarUrl);
-
-        // 🟢 FIX: Evict stale null entry from profile cache immediately
         if (currentUsername) {
           await invalidateAvatar(currentUsername);
         }
@@ -158,7 +157,7 @@ export default function ProfileScreen({ navigation, onLogoutTrigger }: any) {
 
   const handleDeletePost = async (postId: any) => {
     try {
-      await apiClient.delete(API_ROUTES.PROFILE.DELETE_POST(postId));
+      await apiClient.delete(API_ROUTES.POSTS.DELETE(postId));
       setUserPosts(current => current.filter(post => String(post.id) !== String(postId)));
       
       Toast.show({
@@ -190,13 +189,13 @@ export default function ProfileScreen({ navigation, onLogoutTrigger }: any) {
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
       <View style={styles.topNav}>
-        <Text style={styles.brandTitle}>Caravel<Text style={{ color: '#8E95A5' }}>Glide</Text></Text>
+        <Text style={styles.brandTitle}>ViaCustos<Text style={{ color: '#8E95A5' }}>GLIDE</Text></Text>
         <TouchableOpacity 
           onPress={() => setMenuVisible(true)} 
           style={styles.iconButton}
           hitSlop={{ top: 15, bottom: 15, left: 15, right: 15 }}
         >
-          <Feather name="more-vertical" size={22} color="#FFF" />
+          <Feather name="settings" size={20} color="#FFF" />
         </TouchableOpacity>
       </View>
 
@@ -216,10 +215,7 @@ export default function ProfileScreen({ navigation, onLogoutTrigger }: any) {
                       headers: authToken ? { Authorization: `Bearer ${authToken}` } : undefined,
                     }}
                     style={styles.avatarImage}
-                    onError={(err) => {
-                      console.warn("Avatar load failed:", fullAvatarUrl, err.nativeEvent.error);
-                      setImageError(true);
-                    }}
+                    onError={(err) => setImageError(true)}
                   />
                 ) : (
                   <Feather name="user" size={48} color="#4A5060" />
@@ -251,14 +247,57 @@ export default function ProfileScreen({ navigation, onLogoutTrigger }: any) {
         )}
       />
 
+      {/* Profile & Settings Modal */}
       <Modal visible={menuVisible} animationType="slide" transparent={true} onRequestClose={() => setMenuVisible(false)}>
         <View style={styles.modalOverlay}>
           <TouchableOpacity style={{ flex: 1 }} onPress={() => setMenuVisible(false)} />
           <View style={styles.modalContent}>
-            <TouchableOpacity style={styles.menuItem} onPress={handleLogout}>
-              <Feather name="log-out" size={20} color="#FF3B30" />
-              <Text style={[styles.menuText, { color: '#FF3B30' }]}>Logout</Text>
+            <Text style={styles.menuSectionHeader}>PREFERENCES</Text>
+            <View style={styles.menuItemRow}>
+              <Text style={styles.menuText}>Dark Theme</Text>
+              <Switch value={isDarkMode} onValueChange={setIsDarkMode} trackColor={{ false: '#333', true: '#34C759' }} />
+            </View>
+
+            <TouchableOpacity style={styles.menuItemRow} onPress={() => { setMenuVisible(false); navigation.navigate('PremiumUpgrade'); }}>
+              <Text style={[styles.menuText, { color: '#FBBF24', fontWeight: 'bold' }]}>✨ Upgrade to Premium</Text>
+              <Feather name="chevron-right" size={18} color="#FBBF24" />
             </TouchableOpacity>
+
+            <Text style={[styles.menuSectionHeader, { marginTop: 16 }]}>SUPPORT & HELP</Text>
+            <TouchableOpacity style={styles.menuItemRow} onPress={() => Linking.openURL('mailto:support@viacustos.com?subject=Bug%20Report')}>
+              <Text style={styles.menuText}>Report a Bug</Text>
+              <Feather name="external-link" size={16} color="#666" />
+            </TouchableOpacity>
+
+            <TouchableOpacity style={styles.menuItemRow} onPress={() => Linking.openURL('mailto:support@viacustos.com?subject=Feature%20Suggestion')}>
+              <Text style={styles.menuText}>Suggest a Feature</Text>
+              <Feather name="external-link" size={16} color="#666" />
+            </TouchableOpacity>
+
+            <TouchableOpacity style={styles.menuItemRow} onPress={() => Alert.alert("Help & FAQ", "ViaCustos AirDrops expire automatically after 10 minutes. Enable location permissions for real-time radar scanning.")}>
+              <Text style={styles.menuText}>Help & FAQ</Text>
+              <Feather name="help-circle" size={16} color="#666" />
+            </TouchableOpacity>
+
+            <TouchableOpacity style={styles.menuItemRow} onPress={() => { setMenuVisible(false); navigation.navigate('BlockedUsers'); }}>
+              <Text style={styles.menuText}>Blocked Users</Text>
+              <Feather name="shield" size={16} color="#666" />
+            </TouchableOpacity>
+
+            <Text style={[styles.menuSectionHeader, { marginTop: 16 }]}>LEGAL</Text>
+            <TouchableOpacity style={styles.menuItemRow} onPress={() => Linking.openURL('https://viacustos.com/terms')}>
+              <Text style={styles.menuText}>Terms of Service</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.menuItemRow} onPress={() => Linking.openURL('https://viacustos.com/privacy')}>
+              <Text style={styles.menuText}>Privacy Policy</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity style={[styles.menuItemRow, { marginTop: 20 }]} onPress={handleLogout}>
+              <Feather name="log-out" size={18} color="#FF3B30" />
+              <Text style={[styles.menuText, { color: '#FF3B30', marginLeft: 10 }]}>Logout</Text>
+            </TouchableOpacity>
+
+            <Text style={styles.versionText}>ViaCustos v{APP_VERSION}</Text>
           </View>
         </View>
       </Modal>
@@ -282,7 +321,9 @@ const styles = StyleSheet.create({
   sectionHeader: { alignSelf: 'flex-start', marginBottom: 15, marginTop: 20 },
   sectionTitle: { color: '#666666', fontSize: 12, fontWeight: '800', letterSpacing: 1.2 },
   modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.85)', justifyContent: 'flex-end' },
-  modalContent: { backgroundColor: '#1A1A1A', borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 24, borderWidth: 1, borderColor: '#262626' },
-  menuItem: { flexDirection: 'row', alignItems: 'center', paddingVertical: 14 },
-  menuText: { fontSize: 15, fontWeight: '700', marginLeft: 14 }
+  modalContent: { backgroundColor: '#1A1A1A', borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 20, borderWidth: 1, borderColor: '#262626' },
+  menuSectionHeader: { color: '#666666', fontSize: 11, fontWeight: '800', letterSpacing: 1, marginBottom: 8 },
+  menuItemRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: '#262626' },
+  menuText: { fontSize: 14, fontWeight: '700', color: '#FFFFFF' },
+  versionText: { textAlign: 'center', color: '#666', fontSize: 11, marginTop: 20, marginBottom: 10 }
 });

@@ -95,7 +95,7 @@ export default function PostCard({ post, currentUsername: propUsername, onDelete
     setUserVote(newVoteState);
 
     try {
-      await apiClient.post(API_ROUTES.POST.VOTE(post.id, newVoteState || 'none'));
+      await apiClient.post(API_ROUTES.POSTS.VOTE(post.id, newVoteState || 'none'));
     } catch (err) {
       setVotes(prev => prev - diff);
       setUserVote(userVote);
@@ -104,15 +104,15 @@ export default function PostCard({ post, currentUsername: propUsername, onDelete
 
   const handleShare = async () => {
     try {
-      const appDomain = process.env.EXPO_PUBLIC_API_BASE_URL || 'https://sandbag-sterling-leggings.ngrok-free.dev';
+      const appDomain = process.env.EXPO_PUBLIC_API_BASE_URL;
       const shareUrl = `${appDomain}/post/${post.id}`;
       
       const snippet = post.title || post.content || '';
       
       await Share.share({ 
-        message: `Check out this post by @${displayUsername} on GhostShield!\n\n"${snippet}"\n\nTap to view: ${shareUrl}`,
+        message: `Check out this post by @${displayUsername} on ViaCustos!\n\n"${snippet}"\n\nTap to view: ${shareUrl}`,
         url: shareUrl, 
-        title: post.title || 'GhostShield Post'
+        title: post.title || 'ViaCustos Post'
       });
 
       apiClient.post(`/v1/social/post/${post.id}/share`).catch(() => {});

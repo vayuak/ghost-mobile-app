@@ -30,7 +30,6 @@ export default function GossipsInboxScreen({ navigation }: any) {
   const loadInbox = () => {
     if (!activeUser) return;
     try {
-      // 🟢 FIX: Replaces the manual DB loop with the dedicated query
       const t = getRecentConversations(activeUser);
       setThreads(t);
       hydrateAvatars(t.map(x => x.targetUser));
@@ -46,7 +45,7 @@ export default function GossipsInboxScreen({ navigation }: any) {
       if (avatars[user]) continue; 
 
       try {
-        const response = await apiClient.get(API_ROUTES.SOCIAL.USER_PROFILE(user));
+        const response = await apiClient.get(API_ROUTES.USERS.PROFILE(user));
         if (response && (response.avatarUrl || response.profilePictureUrl)) {
           const rawUrl = response.avatarUrl || response.profilePictureUrl;
           const fullUrl = rawUrl.startsWith('http') 
@@ -76,17 +75,22 @@ export default function GossipsInboxScreen({ navigation }: any) {
   }, [activeUser]);
 
   const handleLongPress = (roomId: string, targetUser: string) => {
-    Alert.alert('Manage Chat', `Options for @${targetUser}`, [
-      { text: 'Clear History', onPress: () => {
-          clearLocalMessages(roomId, true, targetUser, activeUser);
-          loadInbox();
-      }},
-      { text: 'Delete Chat', style: 'destructive', onPress: () => {
-          clearLocalMessages(roomId, false);
-          loadInbox();
-      }},
-      { text: 'Cancel', style: 'cancel' }
-    ]);
+    Alert.alert(
+      'Manage Chat', 
+      `Options for @${targetUser}`, 
+      [
+        { text: 'Clear History', onPress: () => {
+            clearLocalMessages(roomId, true, targetUser, activeUser);
+            loadInbox();
+        }},
+        { text: 'Delete Chat', style: 'destructive', onPress: () => {
+            clearLocalMessages(roomId, false);
+            loadInbox();
+        }},
+        { text: 'Cancel', style: 'cancel' }
+      ],
+      { cancelable: true }
+    );
   };
 
   const formatTime = (iso: string) => {

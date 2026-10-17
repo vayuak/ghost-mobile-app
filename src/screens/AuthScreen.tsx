@@ -1,15 +1,17 @@
 import React, { useState, useEffect } from 'react';
-import { Text, View, TextInput, TouchableOpacity, ActivityIndicator, KeyboardAvoidingView, Platform, ScrollView, StyleSheet, BackHandler } from 'react-native';
+import { Text, View, TextInput, TouchableOpacity, ActivityIndicator, KeyboardAvoidingView, Platform, ScrollView, StyleSheet, BackHandler, Linking, Alert } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as SecureStore from 'expo-secure-store'; 
 import { Feather } from '@expo/vector-icons';
 import { apiClient, API_ROUTES } from '../services/api';
 import { initializeDeviceKeys } from '../services/CryptoVault';
+
 export default function AuthScreen({ onAuthSuccess }: { onAuthSuccess: () => void }) {
   const [currentMode, setCurrentMode] = useState<'LOGIN' | 'REGISTER' | 'FORGOT_PASSWORD'>('LOGIN');
   const [workflowStep, setWorkflowStep] = useState<1 | 2>(1); 
   const [loading, setLoading] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
+  const [hasConsented, setHasConsented] = useState(false);
 
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
@@ -19,7 +21,6 @@ export default function AuthScreen({ onAuthSuccess }: { onAuthSuccess: () => voi
   const [uiMessage, setUiMessage] = useState<{ text: string, type: 'error' | 'success' } | null>(null);
   const [usernameStatus, setUsernameStatus] = useState<'AVAILABLE' | 'TAKEN' | null>(null);
 
-  // 🟢 FIXED: Hardware Back Button Handling
   useEffect(() => {
     const backAction = () => {
       if (workflowStep === 2) {
@@ -64,33 +65,32 @@ export default function AuthScreen({ onAuthSuccess }: { onAuthSuccess: () => voi
     return pass.length >= 8 && /[A-Z]/.test(pass) && /[0-9]/.test(pass) && /[^A-Za-z0-9]/.test(pass);
   };
 
-const sanitizeError = (err: any) => {
-  if (err?.response?.data && typeof err.response.data === 'object' && !err.response.data.error) {
-     const firstErrorKey = Object.keys(err.response.data)[0];
-     return err.response.data[firstErrorKey] || 'Invalid input provided.';
-  }
+  const sanitizeError = (err: any) => {
+    if (err?.response?.data && typeof err.response.data === 'object' && !err.response.data.error) {
+       const firstErrorKey = Object.keys(err.response.data)[0];
+       return err.response.data[firstErrorKey] || 'Invalid input provided.';
+    }
 
-  const msg = err?.message?.toLowerCase() || err?.response?.data?.error?.toLowerCase() || '';
-  
-  // 🟢 NEW: Explicitly handle account suspension messages
-  if (msg.includes('suspended') || msg.includes('blocked') || msg.includes('banned') || msg.includes('disabled')) {
-    return 'Your account has been suspended due to multiple community reports. Please contact support at badger.developer.001@gmail.com for assistance.';
-  }
+    const msg = err?.message?.toLowerCase() || err?.response?.data?.error?.toLowerCase() || '';
+    
+    if (msg.includes('suspended') || msg.includes('blocked') || msg.includes('banned') || msg.includes('disabled')) {
+      return 'Your account has been suspended due to multiple community reports. Please contact support at badger.developer.001@gmail.com for assistance.';
+    }
 
-  if (msg.includes('incorrect email') || msg.includes('invalid identity') || msg.includes('bad credentials')) return 'Incorrect email or password. Please try again or register.';
-  if (msg.includes('contact method') || msg.includes('platform footprint')) return 'This email is already registered. Please return to login.';
-  if (msg.includes('identity signature') || msg.includes('infrastructure')) return 'This username is already taken. Please choose another.';
-  if (msg.includes('processing active') || msg.includes('handshake protocol')) return 'A verification code was recently sent to this email. Please wait 10 minutes before trying again.';
-  if (msg.includes('staging window lost')) return 'Your verification session expired. Please register again.';
-  if (msg.includes('too many invalid attempts')) return 'Too many invalid attempts. Please request a new code.';
-  if (msg.includes('no active registration handshake')) return 'Verification failed. The code may have expired, or you need to restart the app.';
-  if (msg.includes('not found') || msg.includes('404')) return 'We could not find an account with that email.';
-  if (msg.includes('network') || msg.includes('timeout')) return 'Network error. Please check your internet connection.';
-  if (msg.includes('deliver') || msg.includes('smtp') || msg.includes('connection refused')) return 'We could not deliver the email. Please check if the address is typed correctly.';
-  if (msg.includes('500') || msg.includes('internal')) return 'Something went wrong on our end. Please try again later.';
-  
-  return err?.response?.data?.error || err?.message || 'An unexpected error occurred. Please try again.';
-};
+    if (msg.includes('incorrect email') || msg.includes('invalid identity') || msg.includes('bad credentials')) return 'Incorrect email or password. Please try again or register.';
+    if (msg.includes('contact method') || msg.includes('platform footprint')) return 'This email is already registered. Please return to login.';
+    if (msg.includes('identity signature') || msg.includes('infrastructure')) return 'This username is already taken. Please choose another.';
+    if (msg.includes('processing active') || msg.includes('handshake protocol')) return 'A verification code was recently sent to this email. Please wait 10 minutes before trying again.';
+    if (msg.includes('staging window lost')) return 'Your verification session expired. Please register again.';
+    if (msg.includes('too many invalid attempts')) return 'Too many invalid attempts. Please request a new code.';
+    if (msg.includes('no active registration handshake')) return 'Verification failed. The code may have expired, or you need to restart the app.';
+    if (msg.includes('not found') || msg.includes('404')) return 'We could not find an account with that email.';
+    if (msg.includes('network') || msg.includes('timeout')) return 'Network error. Please check your internet connection.';
+    if (msg.includes('deliver') || msg.includes('smtp') || msg.includes('connection refused')) return 'We could not deliver the email. Please check if the address is typed correctly.';
+    if (msg.includes('500') || msg.includes('internal')) return 'Something went wrong on our end. Please try again later.';
+    
+    return err?.response?.data?.error || err?.message || 'An unexpected error occurred. Please try again.';
+  };
 
   const validateInput = () => {
     if (currentMode === 'REGISTER' || currentMode === 'FORGOT_PASSWORD') {
@@ -141,21 +141,29 @@ const sanitizeError = (err: any) => {
 
   const handleRegister = async () => {
     setUiMessage(null);
+    
+    // 🟢 ENFORCEMENT: Block API call if consent is not given
+    if (!hasConsented) {
+      Alert.alert(
+        "Consent Required", 
+        "You must agree to the Terms of Service and Privacy Policy to create an account and access community features."
+      );
+      return;
+    }
+
     if (!username || !password || !contactId) return setUiMessage({ text: 'All fields are mandatory.', type: 'error' });
     if (!validateInput()) return;
     
     setLoading(true);
     try {
       const cleanUsername = username.toLowerCase().trim();
-      
-      // 🟢 FIX: Generate mathematically valid Curve25519 NaCl keys and auto-save them to AsyncStorage
       const realPublicKey = await initializeDeviceKeys(cleanUsername);
 
       await apiClient.post(API_ROUTES.AUTH.REGISTER, { 
         username: cleanUsername, 
         password, 
         contactIdentifier: contactId.trim(),
-        publicKey: realPublicKey // 🟢 Sends the real, valid cryptographic key to the backend
+        publicKey: realPublicKey 
       });
       
       setUiMessage({ text: `Verification code sent to ${contactId.trim()}`, type: 'success' }); 
@@ -223,7 +231,7 @@ const sanitizeError = (err: any) => {
   return (
     <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={{ flex: 1, backgroundColor: '#000000' }}>
       <ScrollView contentContainerStyle={styles.container}>
-        <Text style={styles.brandTitle}>Caravel</Text>
+        <Text style={styles.brandTitle}>ViaCustos</Text>
         <Text style={styles.brandSubtitle}>Explore together. Travel safely.</Text>
         <View style={styles.card}>
           <Text style={styles.modeText}>[{currentMode} PROTOCOL]</Text>
@@ -264,15 +272,37 @@ const sanitizeError = (err: any) => {
                 </View>
               )}
 
-              <TouchableOpacity style={styles.primaryButton} onPress={executePrimaryAction}>
+              {/* 🟢 CONDITIONAL RENDER: Show Explicit Checkbox for Register, otherwise standard text */}
+              {currentMode === 'REGISTER' ? (
+                <TouchableOpacity 
+                  style={styles.consentRow} 
+                  onPress={() => setHasConsented(!hasConsented)}
+                  activeOpacity={0.8}
+                >
+                  <View style={[styles.checkbox, hasConsented && styles.checkboxActive]}>
+                    {hasConsented && <Feather name="check" size={14} color="#000" />}
+                  </View>
+                  <Text style={styles.consentText}>
+                    I have read and agree to the <Text style={styles.linkText} onPress={() => Linking.openURL('https://viacustos.com/terms')}>Terms of Service</Text> and <Text style={styles.linkText} onPress={() => Linking.openURL('https://viacustos.com/privacy')}>Privacy Policy</Text>, including community guidelines on acceptable content.
+                  </Text>
+                </TouchableOpacity>
+              ) : (
+                <View style={{ marginTop: 20 }}>
+                  <Text style={styles.disclaimerText}>
+                    By continuing, you agree to our Terms of Service and Privacy Policy. 
+                    We have zero tolerance for objectionable content or abusive users.
+                  </Text>
+                </View>
+              )}
+
+              <TouchableOpacity 
+                style={[styles.primaryButton, (currentMode === 'REGISTER' && !hasConsented) && styles.primaryButtonDisabled]} 
+                onPress={executePrimaryAction}
+                disabled={currentMode === 'REGISTER' && !hasConsented}
+              >
                 {loading ? <ActivityIndicator color="#666666"/> : <Text style={styles.primaryBtnText}>{currentMode === 'LOGIN' ? 'LOGIN' : currentMode === 'REGISTER' ? 'REGISTER' : 'SEND RESET CODE'}</Text>}
               </TouchableOpacity>
-              <View style={{ marginTop: 20 }}>
-                <Text style={{ color: '#404040', fontSize: 9, textAlign: 'center', lineHeight: 14, fontWeight: '600' }}>
-                  By continuing, you agree to our Terms of Service and Privacy Policy. 
-                  We have zero tolerance for objectionable content or abusive users.
-                </Text>
-              </View>
+
               <View style={styles.toggleRow}>
                 {currentMode === 'LOGIN' ? (
                   <>
@@ -337,5 +367,14 @@ const styles = StyleSheet.create({
   primaryButton: { backgroundColor: '#262626', padding: 16, marginTop: 24, alignItems: 'center', borderWidth: 1, borderColor: '#404040' },
   primaryBtnText: { color: '#666666', fontWeight: '900', letterSpacing: 2 },
   toggleRow: { flexDirection: 'row', justifyContent: 'space-between', marginTop: 30, paddingTop: 20, borderTopWidth: 1, borderTopColor: '#262626' },
-  link: { color: '#666666', fontSize: 11, fontWeight: '800', letterSpacing: 1, textTransform: 'uppercase' }
+  link: { color: '#666666', fontSize: 11, fontWeight: '800', letterSpacing: 1, textTransform: 'uppercase' },
+  
+  // 🟢 NEW: Consent UI Styles
+  consentRow: { flexDirection: 'row', alignItems: 'flex-start', marginTop: 20, marginBottom: 4 },
+  checkbox: { width: 18, height: 18, borderWidth: 1.5, borderColor: '#666', borderRadius: 4, justifyContent: 'center', alignItems: 'center', marginRight: 12, marginTop: 2 },
+  checkboxActive: { backgroundColor: '#FBBF24', borderColor: '#FBBF24' },
+  consentText: { flex: 1, color: '#666', fontSize: 10, lineHeight: 16, fontWeight: '600' },
+  linkText: { color: '#FBBF24', fontWeight: '700' },
+  primaryButtonDisabled: { opacity: 0.4 },
+  disclaimerText: { color: '#404040', fontSize: 9, textAlign: 'center', lineHeight: 14, fontWeight: '600', marginBottom: 4 }
 });

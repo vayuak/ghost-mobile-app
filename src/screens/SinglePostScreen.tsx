@@ -40,9 +40,9 @@ export default function SinglePostScreen({ route, navigation }: any) {
 
   const fetchPostAndComments = async () => {
     try {
-      const postResponse = await apiClient.get(API_ROUTES.POST.GET_SINGLE(postId));
+      const postResponse = await apiClient.get(API_ROUTES.POSTS.GET_SINGLE(postId));
       setPost(postResponse);
-      const commentsResponse = await apiClient.get(API_ROUTES.POST.GET_COMMENTS(postId, Date.now()));
+      const commentsResponse = await apiClient.get(API_ROUTES.POSTS.GET_COMMENTS(postId, Date.now()));
       setComments(commentsResponse || []);
     } catch (err: any) {
       setError("This post may have been deleted or is unavailable.");
@@ -60,13 +60,13 @@ export default function SinglePostScreen({ route, navigation }: any) {
     
     setIsSending(true);
     try {
-      await apiClient.post(API_ROUTES.POST.CREATE_COMMENT(postId), {
+      await apiClient.post(API_ROUTES.POSTS.CREATE_COMMENT(postId), {
         content: commentInput.trim(),
         parentId: null 
       });
       
       setCommentInput('');
-      const commentsResponse = await apiClient.get(API_ROUTES.POST.GET_COMMENTS(postId, Date.now()));
+      const commentsResponse = await apiClient.get(API_ROUTES.POSTS.GET_COMMENTS(postId, Date.now()));
       setComments(commentsResponse || []);
       setPost((prev: any) => ({ ...prev, commentCount: (prev.commentCount || 0) + 1 }));
     } catch (err: any) {

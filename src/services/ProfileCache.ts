@@ -70,7 +70,7 @@ const fetchBatch = async (usernames: string[]): Promise<CachedProfile[]> => {
   for (const u of usernames.slice(0, MAX_BATCH)) {
     try {
       // 🟢 FIX: Use the lightweight profile route, NOT full-profile!
-      const p: any = await apiClient.get(API_ROUTES.SOCIAL.USER_PROFILE(u));
+      const p: any = await apiClient.get(API_ROUTES.USERS.PROFILE(u));
       out.push({
         username: u,
         // The lightweight route returns the data directly, not wrapped in a 'profile' object
