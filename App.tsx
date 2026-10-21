@@ -7,19 +7,18 @@ import * as Linking from 'expo-linking';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { ActivityIndicator, View, Platform } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
-import Toast, { BaseToast } from 'react-native-toast-message'; 
+import Toast, { BaseToast, ErrorToast } from 'react-native-toast-message'; 
 import * as Notifications from 'expo-notifications'; 
 
-// 🟢 NEW: Theme Provider Import
-import { ThemeProvider } from './src/context/ThemeContext';
+import { ThemeProvider, useTheme } from './src/context/ThemeContext'; // 🟢 Global Theme Wrapper
 
 import SinglePostScreen from './src/screens/SinglePostScreen';
 import AuthScreen from './src/screens/AuthScreen';
 import TabNavigator from './src/navigation/TabNavigator';
 import GossipsChatScreen from './src/screens/GossipsChatScreen';
 import PublicProfileScreen from './src/screens/PublicProfileScreen'; 
-import BlockedUsersScreen from './src/screens/BlockedUsersScreen'; // 🟢 Wired
-import PremiumUpgradeScreen from './src/screens/PremiumUpgradeScreen'; // 🟢 Wired
+import BlockedUsersScreen from './src/screens/BlockedUsersScreen'; 
+import PremiumUpgradeScreen from './src/screens/PremiumUpgradeScreen'; 
 
 import { initLocalDatabase } from './src/services/LocalDB';
 import { ensureKeysPublished } from './src/services/CryptoVault';
@@ -41,13 +40,43 @@ const linking: any = {
   },
 };
 
-const toastConfig = {
-  info: (props: any) => (
-    <BaseToast {...props} style={{ borderLeftColor: '#34C759', backgroundColor: '#1A1A1A', borderRadius: 12, borderLeftWidth: 4, width: '90%' }} contentContainerStyle={{ paddingHorizontal: 15 }} text1Style={{ fontSize: 15, fontWeight: 'bold', color: '#FFF' }} text2Style={{ fontSize: 13, color: '#A3A3A3' }} />
-  ),
-  success: (props: any) => <BaseToast {...props} style={{ borderLeftColor: '#00C851', backgroundColor: '#1A1A1A' }} text1Style={{ color: '#FFF' }} text2Style={{ color: '#A3A3A3' }} />,
-  error: (props: any) => <BaseToast {...props} style={{ borderLeftColor: '#FF4444', backgroundColor: '#1A1A1A' }} text1Style={{ color: '#FFF' }} text2Style={{ color: '#A3A3A3' }} />
+// 🟢 FIX: Beautiful, Theme-Aware Toasts component wrapper
+const ThemedToast = () => {
+  const { colors, isDarkMode } = useTheme();
+
+  const toastConfig = {
+    success: (props: any) => (
+      <BaseToast
+        {...props}
+        style={{ borderLeftColor: '#34C759', backgroundColor: colors.surface, borderRadius: 12, borderWidth: isDarkMode ? 1 : 0, borderColor: colors.border, width: '90%', shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.1, shadowRadius: 8, elevation: 4 }}
+        contentContainerStyle={{ paddingHorizontal: 15 }}
+        text1Style={{ fontSize: 14, fontWeight: '800', color: colors.text }}
+        text2Style={{ fontSize: 12, fontWeight: '600', color: colors.textMuted }}
+      />
+    ),
+    error: (props: any) => (
+      <ErrorToast
+        {...props}
+        style={{ borderLeftColor: colors.danger, backgroundColor: colors.surface, borderRadius: 12, borderWidth: isDarkMode ? 1 : 0, borderColor: colors.border, width: '90%', shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.1, shadowRadius: 8, elevation: 4 }}
+        contentContainerStyle={{ paddingHorizontal: 15 }}
+        text1Style={{ fontSize: 14, fontWeight: '800', color: colors.text }}
+        text2Style={{ fontSize: 12, fontWeight: '600', color: colors.textMuted }}
+      />
+    ),
+    info: (props: any) => (
+      <BaseToast
+        {...props}
+        style={{ borderLeftColor: colors.primary, backgroundColor: colors.surface, borderRadius: 12, borderWidth: isDarkMode ? 1 : 0, borderColor: colors.border, width: '90%', shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.1, shadowRadius: 8, elevation: 4 }}
+        contentContainerStyle={{ paddingHorizontal: 15 }}
+        text1Style={{ fontSize: 14, fontWeight: '800', color: colors.text }}
+        text2Style={{ fontSize: 12, fontWeight: '600', color: colors.textMuted }}
+      />
+    )
+  };
+
+  return <Toast config={toastConfig} />;
 };
+
 
 export default function App() {
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(false);
@@ -64,7 +93,6 @@ export default function App() {
             await Notifications.setNotificationChannelAsync('messages', { name: 'Messages', importance: Notifications.AndroidImportance.HIGH, sound: 'default' });
           }
         }
-
         initLocalDatabase();
         const token = await AsyncStorage.getItem('@ghost_token');
         const user = await AsyncStorage.getItem('@active_username');
@@ -106,7 +134,7 @@ export default function App() {
 
   return (
     <SafeAreaProvider>
-      <ThemeProvider> {/* 🟢 Global Theme Wrapper */}
+      <ThemeProvider> 
         <NavigationContainer linking={linking}>
           {isAuthenticated && activeUser ? (
             <GlobalNetworkManager key={activeUser}>
@@ -116,19 +144,21 @@ export default function App() {
                 </Stack.Screen>
                 <Stack.Screen name="GossipsChat" component={GossipsChatScreen} />
                 <Stack.Screen name="PublicProfile" component={PublicProfileScreen} />
+                
+                {/* 🟢 SinglePost sits here ABOVE the tabs, so they naturally hide */}
                 <Stack.Screen name="SinglePost" component={SinglePostScreen} />
                 
-                {/* 🟢 NEW SCREENS WIRED HERE */}
                 <Stack.Screen name="BlockedUsers" component={BlockedUsersScreen} />
                 <Stack.Screen name="PremiumUpgrade" component={PremiumUpgradeScreen} />
-
               </Stack.Navigator>
             </GlobalNetworkManager>
           ) : (
             <AuthScreen onAuthSuccess={handleAuthSuccess} />
           )}
         </NavigationContainer>
-        <Toast config={toastConfig} /> 
+        
+        {/* 🟢 Themed Toasts Root Injector */}
+        <ThemedToast /> 
       </ThemeProvider>
     </SafeAreaProvider>
   );

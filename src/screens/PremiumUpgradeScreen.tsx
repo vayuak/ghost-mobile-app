@@ -40,6 +40,8 @@ export default function PremiumUpgradeScreen({ navigation }: any) {
         <View style={styles.featureBox}>
           <View style={styles.featureRow}><Feather name="check-circle" size={20} color="#34C759" /><Text style={styles.featureText}>Unlimited Daily AirDrops</Text></View>
           <View style={styles.featureRow}><Feather name="check-circle" size={20} color="#34C759" /><Text style={styles.featureText}>Zero Advertisements</Text></View>
+          <View style={styles.featureRow}><Feather name="check-circle" size={20} color="#34C759" /><Text style={styles.featureText}>Priority Support</Text></View>
+          <View style={styles.featureRow}><Feather name="check-circle" size={20} color="#34C759" /><Text style={styles.featureText}>Send Images</Text></View>
         </View>
 
         <TouchableOpacity style={[styles.upgradeBtn, isProcessing && { opacity: 0.7 }]} onPress={handleUpgrade} disabled={isProcessing}>

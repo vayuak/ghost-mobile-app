@@ -155,6 +155,12 @@ export default function AuthScreen({ onAuthSuccess }: { onAuthSuccess: () => voi
     else handleForgotPassword();
   };
 
+  const getHeaderTitle = () => {
+    if (currentMode === 'LOGIN') return "Sign In";
+    if (currentMode === 'REGISTER') return "Sign Up";
+    return "Reset Password";
+  };
+
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: lightAuthColors.background }}>
       <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={{ flex: 1 }}>
@@ -164,7 +170,8 @@ export default function AuthScreen({ onAuthSuccess }: { onAuthSuccess: () => voi
           <Text style={styles.brandSubtitle}>Explore together. Travel safely.</Text>
           
           <View style={styles.card}>
-            <Text style={styles.modeText}>[{currentMode} PROTOCOL]</Text>
+            {/* 🟢 Removed boring protocol text, replaced with clean title */}
+            <Text style={styles.modeText}>{getHeaderTitle()}</Text>
 
             {workflowStep === 1 ? (
               <>
@@ -213,11 +220,11 @@ export default function AuthScreen({ onAuthSuccess }: { onAuthSuccess: () => voi
                 <View style={styles.toggleRow}>
                   {currentMode === 'LOGIN' ? (
                     <>
-                      <TouchableOpacity onPress={() => { setCurrentMode('REGISTER'); setUiMessage(null); }} hitSlop={{ top: 10, bottom: 10 }}><Text style={styles.link}>New User? Register</Text></TouchableOpacity>
+                      <TouchableOpacity onPress={() => { setCurrentMode('REGISTER'); setUiMessage(null); }} hitSlop={{ top: 10, bottom: 10 }}><Text style={styles.link}>New User? Sign Up</Text></TouchableOpacity>
                       <TouchableOpacity onPress={() => { setCurrentMode('FORGOT_PASSWORD'); setUiMessage(null); }} hitSlop={{ top: 10, bottom: 10 }}><Text style={styles.link}>Forgot Password?</Text></TouchableOpacity>
                     </>
                   ) : (
-                    <TouchableOpacity onPress={() => { setCurrentMode('LOGIN'); setUiMessage(null); }} hitSlop={{ top: 10, bottom: 10 }}><Text style={styles.link}>Return to Login</Text></TouchableOpacity>
+                    <TouchableOpacity onPress={() => { setCurrentMode('LOGIN'); setUiMessage(null); }} hitSlop={{ top: 10, bottom: 10 }}><Text style={styles.link}>Return to Log In</Text></TouchableOpacity>
                   )}
                 </View>
               </>
@@ -232,14 +239,17 @@ export default function AuthScreen({ onAuthSuccess }: { onAuthSuccess: () => voi
                   </View>
                 )}
                 
-                <Text style={styles.label}>6-Digit Verification Code</Text>
-                <TextInput style={[styles.inputPill, { fontSize: 24, letterSpacing: 10, textAlign: 'center', marginTop: 8 }]} value={otpCode} onChangeText={setOtpCode} placeholder="------" placeholderTextColor={lightAuthColors.textMuted} keyboardType="number-pad" maxLength={6}/>
+                {/* 🟢 Fix: Added spacing between OTP code input and the element above it */}
+                <View style={{ marginTop: 16 }}>
+                  <Text style={styles.label}>6-Digit Verification Code</Text>
+                  <TextInput style={[styles.inputPill, { fontSize: 24, letterSpacing: 10, textAlign: 'center', marginTop: 8 }]} value={otpCode} onChangeText={setOtpCode} placeholder="------" placeholderTextColor={lightAuthColors.textMuted} keyboardType="number-pad" maxLength={6}/>
+                </View>
                 
                 {uiMessage && (
                   <View style={styles.messageBox}><Text style={[styles.messageText, uiMessage.type === 'error' ? { color: lightAuthColors.danger } : { color: lightAuthColors.primary }]}>{uiMessage.text}</Text></View>
                 )}
                 
-                <TouchableOpacity style={styles.primaryButton} onPress={handleVerifyOtp} disabled={loading} activeOpacity={0.8}>
+                <TouchableOpacity style={[styles.primaryButton, { marginTop: 24 }]} onPress={handleVerifyOtp} disabled={loading} activeOpacity={0.8}>
                   {loading ? <ActivityIndicator color="#FFF"/> : <Text style={styles.primaryBtnText}>VERIFY CODE</Text>}
                 </TouchableOpacity>
               </>
@@ -251,13 +261,12 @@ export default function AuthScreen({ onAuthSuccess }: { onAuthSuccess: () => voi
   );
 }
 
-// 🟢 FIX: 100% Flat, Borderless UI merged with your exact functional layout
 const getStyles = () => StyleSheet.create({
   container: { flexGrow: 1, padding: 24, justifyContent: 'center' }, 
   brandTitle: { color: lightAuthColors.text, fontSize: 36, fontWeight: '900', letterSpacing: 2, textAlign: 'center', fontStyle: 'italic', marginBottom: 8 },
   brandSubtitle: { color: lightAuthColors.textMuted, fontSize: 13, fontWeight: '600', textAlign: 'center', marginBottom: 40 },
   card: { padding: 8 }, 
-  modeText: { color: lightAuthColors.textMuted, fontSize: 12, fontWeight: '800', textAlign: 'center', marginBottom: 24, letterSpacing: 2 },
+  modeText: { color: lightAuthColors.text, fontSize: 18, fontWeight: '800', textAlign: 'center', marginBottom: 24, letterSpacing: 1 },
   label: { color: lightAuthColors.textMuted, fontSize: 11, fontWeight: '800', marginBottom: 6, textTransform: 'uppercase', letterSpacing: 1, textAlign: 'center' },
   inputWrapper: { position: 'relative', justifyContent: 'center', marginBottom: 16 },
   statusTextRight: { position: 'absolute', right: 18, fontWeight: 'bold' },

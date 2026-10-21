@@ -30,7 +30,9 @@ export default function HomeFeedScreen({ navigation, route }: any) {
   const [searchVisiblePosts, setSearchVisiblePosts] = useState<string[]>([]);
 
   const [metaMatrix, setMetaMatrix] = useState<any[]>([]);
-  const [selectedCity, setSelectedCity] = useState('Global');
+  
+  // 🟢 FIX: Initialize as empty string to prevent early fetching before AsyncStorage loads
+  const [selectedCity, setSelectedCity] = useState(''); 
   const [fetchingMeta, setFetchingMeta] = useState(true);
   
   const [citySearchQuery, setCitySearchQuery] = useState(''); 
@@ -48,26 +50,52 @@ export default function HomeFeedScreen({ navigation, route }: any) {
     AsyncStorage.getItem('@ghost_token').then(token => setAuthToken(token));
   }, []);
 
-  useFocusEffect(useCallback(() => {
-    if (route.params?.autoSearch) {
-      setSearchQuery(route.params.autoSearch); setSearchModalVisible(true);
-      setTimeout(() => searchInputRef.current?.focus(), 200);
-      navigation.setParams({ autoSearch: undefined });
-    }
-  }, [route.params?.autoSearch]));
-
+  // 🟢 FIX: Load last saved city on mount
   useEffect(() => {
     const fetchCities = async () => {
       try {
-        const data = await apiClient.get(API_ROUTES.SOCIAL.CITIES);
+        const [data, savedCity] = await Promise.all([
+          apiClient.get(API_ROUTES.SOCIAL.CITIES),
+          AsyncStorage.getItem('@last_city')
+        ]);
+        
         setMetaMatrix(data || []);
-        if (data && data.length > 0 && data[0].cities.length > 0) setSelectedCity(data[0].cities[0]);
+        
+        if (savedCity) {
+          setSelectedCity(savedCity);
+        } else if (data && data.length > 0 && data[0].cities.length > 0) {
+          setSelectedCity(data[0].cities[0]);
+        }
       } catch (e) {} finally { setFetchingMeta(false); }
     };
     fetchCities();
   }, []);
 
+  // 🟢 NEW FIX: Listen for incoming autoSearch params from Inbox screen
+  useEffect(() => {
+    if (route.params?.autoSearch) {
+      setSearchModalVisible(true);
+      setSearchQuery(route.params.autoSearch);
+      
+      // IMMEDIATELY clear the param to prevent infinite loops on re-renders
+      navigation.setParams({ autoSearch: undefined });
+      
+      // Ensure the input gets focus after the modal animation
+      setTimeout(() => {
+        searchInputRef.current?.focus();
+      }, 100);
+    }
+  }, [route.params?.autoSearch, navigation]);
+
+  const changeCity = async (city: string) => {
+    setSelectedCity(city);
+    setIsDropdownVisible(false);
+    setCitySearchQuery('');
+    await AsyncStorage.setItem('@last_city', city); // 🟢 FIX: Save choice
+  };
+
   const executeQueryDiscovery = async (targetQuery: string, targetCity: string, pageNum: number = 0, append = false) => {
+    if (!targetCity) return; // Wait until city is loaded
     if (append && !hasMore) return;
     if (!append && !isRefreshing) setIsLoading(true);
     try {
@@ -88,9 +116,11 @@ export default function HomeFeedScreen({ navigation, route }: any) {
   };
 
   useEffect(() => {
-    setPage(0); setHasMore(true);
-    const delayDebounce = setTimeout(() => executeQueryDiscovery(searchQuery, selectedCity, 0, false), 400);
-    return () => clearTimeout(delayDebounce);
+    if (selectedCity) {
+      setPage(0); setHasMore(true);
+      const delayDebounce = setTimeout(() => executeQueryDiscovery(searchQuery, selectedCity, 0, false), 400);
+      return () => clearTimeout(delayDebounce);
+    }
   }, [searchQuery, selectedCity]);
 
   const handleRefresh = () => { setIsRefreshing(true); setPage(0); setHasMore(true); executeQueryDiscovery(searchQuery, selectedCity, 0, false); };
@@ -128,7 +158,7 @@ export default function HomeFeedScreen({ navigation, route }: any) {
             {fetchingMeta ? <ActivityIndicator size="small" color={colors.text} style={{ padding: 20 }} /> : (
               <FlatList data={filteredCities} keyExtractor={(item) => item} keyboardShouldPersistTaps="handled"
                 renderItem={({ item }) => (
-                  <TouchableOpacity style={styles.dropdownItem} onPress={() => { setSelectedCity(item); setIsDropdownVisible(false); setCitySearchQuery(''); }}>
+                  <TouchableOpacity style={styles.dropdownItem} onPress={() => changeCity(item)}>
                     <Text style={[styles.dropdownItemText, selectedCity === item && styles.dropdownItemActive]}>{item}</Text>
                     {selectedCity === item && <Feather name="check" size={16} color={colors.text} />}
                   </TouchableOpacity>
@@ -145,7 +175,7 @@ export default function HomeFeedScreen({ navigation, route }: any) {
           <View style={styles.searchModalHeader}>
             <View style={styles.searchBarContainer}>
               <Feather name="search" size={18} color={colors.textMuted} style={{ marginRight: 8 }} />
-              <TextInput ref={searchInputRef} style={styles.searchInput} placeholder="Search @username or keyword..." placeholderTextColor={colors.textMuted} value={searchQuery} onChangeText={setSearchQuery} autoCapitalize="none" autoFocus />
+              <TextInput ref={searchInputRef} style={styles.searchInput} placeholder="Search @username or keyword..." placeholderTextColor={colors.textMuted} value={searchQuery} onChangeText={setSearchQuery} autoCapitalize="none" />
               {searchQuery.length > 0 && <TouchableOpacity onPress={() => setSearchQuery('')}><Feather name="x-circle" size={16} color={colors.textMuted} /></TouchableOpacity>}
             </View>
             <TouchableOpacity onPress={() => { setSearchModalVisible(false); setSearchQuery(''); }} style={{ marginLeft: 12 }}><Text style={styles.cancelBtnText}>Cancel</Text></TouchableOpacity>
@@ -154,12 +184,9 @@ export default function HomeFeedScreen({ navigation, route }: any) {
           <FlatList data={searchResults} keyExtractor={(item, index) => item.id ? item.id.toString() : index.toString()} contentContainerStyle={{ paddingBottom: 20 }} onViewableItemsChanged={onSearchViewableItemsChanged} viewabilityConfig={viewabilityConfig}
             renderItem={({ item }) => {
               if (searchType === 'USERS') {
-                // 🟢 FIX: Handle deep JSON parsing for DPs and apply the token
                 const rawAvatar = item.avatarUrl || item.profilePictureUrl || item.profile?.avatarUrl || item.profile?.profilePictureUrl;
                 const formattedAvatar = rawAvatar ? (rawAvatar.startsWith('http') ? rawAvatar : `${BASE_URL.replace(/\/$/, '')}${rawAvatar.startsWith('/') ? rawAvatar : `/${rawAvatar}`}`) : null;
-
                 return (
-                  // 🟢 FIX: Removed rigid box styling, made it perfectly flat like Insta
                   <TouchableOpacity style={styles.userCard} onPress={() => handleUserTap(item.username)}>
                     <View style={styles.avatarPlaceholder}>
                       {formattedAvatar ? (

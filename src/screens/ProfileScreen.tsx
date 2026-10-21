@@ -1,7 +1,7 @@
 import React, { useState, useCallback, useEffect, useRef } from 'react';
 import { useFocusEffect, useIsFocused } from '@react-navigation/native';
-import { StyleSheet, Text, View, TouchableOpacity, FlatList, Image, Modal, RefreshControl, Platform, Linking, Alert, Switch } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { StyleSheet, Text, View, TouchableOpacity, FlatList, Image, Modal, RefreshControl, Platform, Linking, Switch } from 'react-native';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Feather, Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -16,6 +16,7 @@ export default function ProfileScreen({ navigation, onLogoutTrigger }: any) {
   const styles = getStyles(colors);
   
   const isFocused = useIsFocused(); 
+  const insets = useSafeAreaInsets();
   const flatListRef = useRef<FlatList>(null); 
   
   const [userPosts, setUserPosts] = useState<any[]>([]);
@@ -27,6 +28,9 @@ export default function ProfileScreen({ navigation, onLogoutTrigger }: any) {
   const [currentUsername, setCurrentUsername] = useState<string>('loading...');
   const [uploadPercent, setUploadPercent] = useState<number | null>(null);
   const [imageError, setImageError] = useState(false);
+  
+  // 🟢 FIX: Replaced Alert.alert with this sleek state
+  const [deleteModal, setDeleteModal] = useState({ visible: false, targetId: null as any });
   
   const [visiblePosts, setVisiblePosts] = useState<string[]>([]);
   const viewabilityConfig = useRef({ itemVisiblePercentThreshold: 50 }).current;
@@ -103,7 +107,9 @@ export default function ProfileScreen({ navigation, onLogoutTrigger }: any) {
     finally { setUploadPercent(null); }
   };
 
-  const handleDeletePost = async (postId: any) => {
+  const confirmDeletePost = async () => {
+    const postId = deleteModal.targetId;
+    setDeleteModal({ visible: false, targetId: null });
     try {
       await apiClient.delete(API_ROUTES.POSTS.DELETE(postId));
       setUserPosts(current => current.filter(post => String(post.id) !== String(postId)));
@@ -132,7 +138,7 @@ export default function ProfileScreen({ navigation, onLogoutTrigger }: any) {
         ref={flatListRef}
         data={userPosts}
         keyExtractor={(item, index) => item.id ? item.id.toString() : index.toString()}
-        contentContainerStyle={{ paddingBottom: 40 }}
+        contentContainerStyle={{ paddingBottom: insets.bottom + 100 }} 
         refreshControl={<RefreshControl refreshing={isRefreshing} onRefresh={handleRefresh} tintColor={colors.text} />}
         onViewableItemsChanged={onViewableItemsChanged}
         viewabilityConfig={viewabilityConfig}
@@ -146,7 +152,6 @@ export default function ProfileScreen({ navigation, onLogoutTrigger }: any) {
                   <Feather name="user" size={48} color={colors.textMuted} />
                 )}
               </View>
-              {/* 🟢 Elegant Cutout Camera Badge */}
               <TouchableOpacity style={styles.cameraBadge} onPress={handleEditProfileDP} disabled={uploadPercent !== null}>
                 <Ionicons name="camera" size={14} color="#FFF" />
               </TouchableOpacity>
@@ -156,14 +161,14 @@ export default function ProfileScreen({ navigation, onLogoutTrigger }: any) {
             <View style={styles.sectionHeader}><Text style={styles.sectionTitle}>MY POSTS</Text></View>
           </View>
         }
-        renderItem={({ item }) => <PostCard post={item} currentUsername={currentUsername} onDelete={handleDeletePost} isVisible={visiblePosts.includes(String(item.id)) && !menuVisible && isFocused} onCommentTap={() => navigation.navigate('SinglePost', { postId: item.id })} />}
+        renderItem={({ item }) => <PostCard post={item} currentUsername={currentUsername} onDelete={() => setDeleteModal({ visible: true, targetId: item.id })} isVisible={visiblePosts.includes(String(item.id)) && !menuVisible && isFocused} onCommentTap={() => navigation.navigate('SinglePost', { postId: item.id })} />}
         ListEmptyComponent={<Text style={{ color: colors.textMuted, textAlign: 'center', marginTop: 30 }}>No posts yet.</Text>}
       />
 
       <Modal visible={menuVisible} animationType="slide" transparent={true} onRequestClose={() => setMenuVisible(false)}>
         <View style={styles.modalOverlay}>
           <TouchableOpacity style={{ flex: 1 }} onPress={() => setMenuVisible(false)} />
-          <View style={styles.modalContent}>
+          <View style={[styles.modalContent, { paddingBottom: Math.max(insets.bottom, 20) }]}>
             <Text style={styles.menuSectionHeader}>PREFERENCES</Text>
             
             <View style={styles.menuItemRow}>
@@ -176,6 +181,7 @@ export default function ProfileScreen({ navigation, onLogoutTrigger }: any) {
               <Feather name="chevron-right" size={18} color="#FBBF24" />
             </TouchableOpacity>
 
+            {/* 🟢 Maintained your support & help links here */}
             <Text style={[styles.menuSectionHeader, { marginTop: 16 }]}>SUPPORT & HELP</Text>
             <TouchableOpacity style={styles.menuItemRow} onPress={() => Linking.openURL('https://viacustos.com')}>
               <Text style={styles.menuText}>Report a Bug</Text>
@@ -204,6 +210,22 @@ export default function ProfileScreen({ navigation, onLogoutTrigger }: any) {
           </View>
         </View>
       </Modal>
+
+      {/* 🟢 NEW: Custom Sleek Confirm Modal for Delete */}
+      <Modal visible={deleteModal.visible} transparent={true} animationType="fade">
+        <View style={styles.modalOverlay}>
+          <TouchableOpacity style={{ flex: 1 }} onPress={() => setDeleteModal({ ...deleteModal, visible: false })} />
+          <View style={[styles.confirmModalContent, { paddingBottom: Math.max(insets.bottom, 20) }]}>
+            <Text style={[styles.confirmMessage, { color: colors.text }]}>Permanently delete this post?</Text>
+            <TouchableOpacity style={styles.actionBtnDestructive} onPress={confirmDeletePost}>
+              <Text style={styles.actionBtnText}>Delete Post</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={[styles.actionBtnCancel, { borderColor: colors.border }]} onPress={() => setDeleteModal({ ...deleteModal, visible: false })}>
+              <Text style={[styles.actionBtnText, { color: colors.text }]}>Cancel</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -217,7 +239,6 @@ const getStyles = (colors: any) => StyleSheet.create({
   avatarWrapper: { position: 'relative', marginBottom: 15 },
   avatarGlow: { width: 104, height: 104, borderRadius: 52, justifyContent: 'center', alignItems: 'center', backgroundColor: colors.surface, overflow: 'hidden' },
   avatarImage: { width: '100%', height: '100%' },
-  // 🟢 Elegant Cutout Style
   cameraBadge: { position: 'absolute', bottom: 0, right: 0, backgroundColor: colors.primary, width: 32, height: 32, borderRadius: 16, justifyContent: 'center', alignItems: 'center', borderWidth: 3, borderColor: colors.background, shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.2, shadowRadius: 3, elevation: 4 },
   uploadText: { color: colors.textMuted, fontSize: 12, fontWeight: '700', marginBottom: 10, letterSpacing: 1 },
   identityContainer: { alignItems: 'center', marginBottom: 20 },
@@ -228,5 +249,11 @@ const getStyles = (colors: any) => StyleSheet.create({
   modalContent: { backgroundColor: colors.background, borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 20, borderWidth: 1, borderColor: colors.border },
   menuSectionHeader: { color: colors.textMuted, fontSize: 11, fontWeight: '800', letterSpacing: 1, marginBottom: 8 },
   menuItemRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: colors.border },
-  menuText: { fontSize: 14, fontWeight: '700', color: colors.text }
+  menuText: { fontSize: 14, fontWeight: '700', color: colors.text },
+  // Modal Styles
+  confirmModalContent: { backgroundColor: colors.background, borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 24 },
+  confirmMessage: { fontSize: 16, fontWeight: '700', textAlign: 'center', marginBottom: 24 },
+  actionBtnDestructive: { backgroundColor: colors.danger, paddingVertical: 16, borderRadius: 12, alignItems: 'center', marginBottom: 12 },
+  actionBtnCancel: { paddingVertical: 16, borderRadius: 12, alignItems: 'center', borderWidth: 1 },
+  actionBtnText: { color: '#FFF', fontWeight: '800', fontSize: 15 }
 });

@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { StyleSheet, View, TouchableOpacity, ActivityIndicator, Text, FlatList, TextInput, KeyboardAvoidingView, Platform, Image, Alert } from 'react-native';
-import { SafeAreaView ,useSafeAreaInsets} from 'react-native-safe-area-context';
+import { StyleSheet, View, TouchableOpacity, ActivityIndicator, Text, FlatList, TextInput, KeyboardAvoidingView, Platform, Image, Keyboard, Modal } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Feather } from '@expo/vector-icons';
 import { useIsFocused, useNavigation } from '@react-navigation/native';
 import { apiClient, API_ROUTES, BASE_URL } from '../services/api';
@@ -28,6 +28,18 @@ export default function SinglePostScreen({ route }: any) {
   const [error, setError] = useState<string | null>(null);
   const [activeUser, setActiveUser] = useState('');
   const [authToken, setAuthToken] = useState<string | null>(null);
+  
+  const [keyboardHeight, setKeyboardHeight] = useState(0); 
+  const [actionModal, setActionModal] = useState({ visible: false, targetId: null as any, type: '', message: '' });
+
+  // 🟢 FIX: Exactly like GossipsChatScreen, only track manual keyboard height on Android
+  useEffect(() => {
+    if (Platform.OS === 'android') {
+      const showSub = Keyboard.addListener('keyboardDidShow', (e) => setKeyboardHeight(e.endCoordinates.height));
+      const hideSub = Keyboard.addListener('keyboardDidHide', () => setKeyboardHeight(0));
+      return () => { showSub.remove(); hideSub.remove(); };
+    }
+  }, []);
 
   useEffect(() => {
     AsyncStorage.getItem('@active_username').then(user => { if (user) setActiveUser(user.toLowerCase()); });
@@ -51,32 +63,22 @@ export default function SinglePostScreen({ route }: any) {
       await apiClient.post(API_ROUTES.POSTS.CREATE_COMMENT(postId), { content: commentInput.trim(), parentId: replyingTo ? replyingTo.id : null });
       setCommentInput(''); setReplyingTo(null);
       await fetchPostAndComments();
-    } catch (err) { alert('Failed to post comment.'); } finally { setIsSending(false); }
+    } catch (err) { } finally { setIsSending(false); }
   };
 
-  const handleDeleteComment = (commentId: string | number) => {
-    Alert.alert("Delete", "Delete this comment?", [
-      { text: "Cancel", style: "cancel" },
-      { text: "Delete", style: "destructive", onPress: async () => {
-          try {
-            await apiClient.delete(API_ROUTES.POSTS.DELETE_COMMENT(commentId));
-            setComments(prev => prev.filter(c => c.id !== commentId && c.parentId !== commentId));
-            setPost((p: any) => ({ ...p, commentCount: Math.max(0, (p.commentCount || 1) - 1) }));
-          } catch (e) { alert("Could not delete comment"); }
-      }}
-    ]);
-  };
-
-  const handleReportComment = (commentId: string | number) => {
-    Alert.alert("Report", "Flag this comment?", [
-      { text: "Cancel", style: "cancel" },
-      { text: "Report", style: "destructive", onPress: async () => {
-          try {
-            await apiClient.post(API_ROUTES.MODERATION.REPORT, { targetId: commentId, type: 'COMMENT_REPORT' });
-            setComments(prev => prev.filter(c => c.id !== commentId && c.parentId !== commentId));
-          } catch (e) { alert("Could not report comment"); }
-      }}
-    ]);
+  const executeAction = async () => {
+    const { targetId, type } = actionModal;
+    setActionModal({ ...actionModal, visible: false });
+    try {
+      if (type === 'DELETE') {
+        await apiClient.delete(API_ROUTES.POSTS.DELETE_COMMENT(targetId));
+        setComments(prev => prev.filter(c => c.id !== targetId && c.parentId !== targetId));
+        setPost((p: any) => ({ ...p, commentCount: Math.max(0, (p.commentCount || 1) - 1) }));
+      } else if (type === 'REPORT') {
+        await apiClient.post(API_ROUTES.MODERATION.REPORT, { targetId, type: 'COMMENT_REPORT' });
+        setComments(prev => prev.filter(c => c.id !== targetId && c.parentId !== targetId));
+      }
+    } catch (e) { }
   };
 
   const handleBackNavigation = () => { if (navigation.canGoBack()) navigation.goBack(); else navigation.reset({ index: 0, routes: [{ name: 'MainTabs' }] }); };
@@ -97,9 +99,9 @@ export default function SinglePostScreen({ route }: any) {
           <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
             <Text style={styles.commentUsername}>@{cleanAuthor}</Text>
             {isMyComment ? (
-               <TouchableOpacity onPress={() => handleDeleteComment(item.id)} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}><Feather name="trash-2" size={14} color={colors.danger}/></TouchableOpacity>
+               <TouchableOpacity onPress={() => setActionModal({ visible: true, targetId: item.id, type: 'DELETE', message: 'Delete this comment permanently?' })} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}><Feather name="trash-2" size={14} color={colors.danger}/></TouchableOpacity>
             ) : (
-               <TouchableOpacity onPress={() => handleReportComment(item.id)} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}><Feather name="flag" size={12} color={colors.textMuted}/></TouchableOpacity>
+               <TouchableOpacity onPress={() => setActionModal({ visible: true, targetId: item.id, type: 'REPORT', message: 'Flag this comment for review?' })} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}><Feather name="flag" size={12} color={colors.textMuted}/></TouchableOpacity>
             )}
           </View>
           <Text style={styles.commentText}>{item.content}</Text>
@@ -111,56 +113,87 @@ export default function SinglePostScreen({ route }: any) {
     );
   };
 
-  return (
-    <SafeAreaView style={styles.container} edges={['top']}>
-      {/* 🟢 FIX: Rock solid KeyboardAvoidingView for all OS */}
-      <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
-        <View style={styles.topNav}>
-         <TouchableOpacity onPress={handleBackNavigation} hitSlop={{ top: 15, bottom: 15, left: 15, right: 15 }}><Feather name="arrow-left" size={24} color={colors.text} /></TouchableOpacity>
-          <TouchableOpacity onPress={() => flatListRef.current?.scrollToOffset({ offset: 0, animated: true })}><Text style={styles.brandTitle}>POST</Text></TouchableOpacity>
-          <View style={{ width: 24 }} />
-        </View>
-
-        <View style={styles.content}>
-          {isLoading ? <ActivityIndicator size="large" color={colors.textMuted} style={{ marginTop: 50 }} /> : error || !post ? (
-            <View style={styles.errorContainer}><Feather name="alert-circle" size={40} color={colors.textMuted} /><Text style={styles.errorText}>{error || "Post not found"}</Text></View>
-          ) : (
-            <FlatList
-              ref={flatListRef} data={comments} keyExtractor={(item) => item.id.toString()} contentContainerStyle={{ paddingBottom: 20 }} keyboardShouldPersistTaps="handled"
-              renderItem={renderComment}
-              ListHeaderComponent={
-                <View style={styles.postWrapper}>
-                  <PostCard post={post} currentUsername={activeUser} isVisible={isFocused} onUserTap={() => navigation.navigate('PublicProfile', { targetUser: post.username })} onCommentTap={() => inputRef.current?.focus()} />
-                  <View style={styles.commentsDivider}><Text style={styles.commentsHeader}>COMMENTS ({post.commentCount || 0})</Text></View>
-                </View>
-              }
-              ListEmptyComponent={<Text style={styles.emptyComments}>No comments yet. Be the first!</Text>}
-            />
-          )}
-        </View>
-
-        {!isLoading && !error && post && (
-          <View style={{ backgroundColor: colors.background }}>
-            {replyingTo && (
-              <View style={styles.replyingIndicator}>
-                <Text style={styles.replyingText}>Replying to @{replyingTo.username}</Text>
-                <TouchableOpacity onPress={() => setReplyingTo(null)}><Feather name="x" size={16} color={colors.text} /></TouchableOpacity>
+  // 🟢 FIX: Packaged the scrollview and input perfectly inside a variable for OS-specific wrapping
+  const screenContent = (
+    <>
+      <View style={styles.content}>
+        {isLoading ? <ActivityIndicator size="large" color={colors.textMuted} style={{ marginTop: 50 }} /> : error || !post ? (
+          <View style={styles.errorContainer}><Feather name="alert-circle" size={40} color={colors.textMuted} /><Text style={styles.errorText}>{error || "Post not found"}</Text></View>
+        ) : (
+          <FlatList
+            ref={flatListRef} data={comments} keyExtractor={(item) => item.id.toString()} 
+            contentContainerStyle={{ paddingBottom: 20 }} 
+            keyboardShouldPersistTaps="handled"
+            renderItem={renderComment}
+            ListHeaderComponent={
+              <View style={styles.postWrapper}>
+                <PostCard post={post} currentUsername={activeUser} isVisible={isFocused} disableCommentAction={true} onUserTap={() => navigation.navigate('PublicProfile', { targetUser: post.username })} />
+                <View style={styles.commentsDivider}><Text style={styles.commentsHeader}>COMMENTS ({post.commentCount || 0})</Text></View>
               </View>
-            )}
-            <View style={[styles.composerContainer, { paddingBottom: Math.max(insets.bottom, 12) }]}>
-              <TextInput ref={inputRef} style={styles.commentInput} placeholder="Add a comment..." placeholderTextColor={colors.textMuted} value={commentInput} onChangeText={setCommentInput} multiline maxLength={200} />
-              <TouchableOpacity style={[styles.sendBtn, (!commentInput.trim() || isSending) && { opacity: 0.5 }]} onPress={handleSendComment} disabled={!commentInput.trim() || isSending}>
-                {isSending ? <ActivityIndicator size="small" color={colors.primary} /> : <Text style={{ color: colors.primary, fontWeight: '700' }}>Post</Text>}
-              </TouchableOpacity>
-            </View>
-          </View>
+            }
+            ListEmptyComponent={<Text style={styles.emptyComments}>No comments yet. Be the first!</Text>}
+          />
         )}
-      </KeyboardAvoidingView>
-    </SafeAreaView>
+      </View>
+
+      {!isLoading && !error && post && (
+        <View style={{ backgroundColor: colors.background }}>
+          {replyingTo && (
+            <View style={styles.replyingIndicator}>
+              <Text style={styles.replyingText}>Replying to @{replyingTo.username}</Text>
+              <TouchableOpacity onPress={() => setReplyingTo(null)}><Feather name="x" size={16} color={colors.text} /></TouchableOpacity>
+            </View>
+          )}
+          
+          <View style={[styles.composerContainer, { paddingBottom: Math.max(insets.bottom, 12) }]}>
+            <TextInput ref={inputRef} style={styles.commentInput} placeholder="Add a comment..." placeholderTextColor={colors.textMuted} value={commentInput} onChangeText={setCommentInput} multiline maxLength={200} />
+            <TouchableOpacity style={[styles.sendBtn, (!commentInput.trim() || isSending) && { opacity: 0.5 }]} onPress={handleSendComment} disabled={!commentInput.trim() || isSending}>
+              {isSending ? <ActivityIndicator size="small" color={colors.primary} /> : <Text style={{ color: colors.primary, fontWeight: '700' }}>Post</Text>}
+            </TouchableOpacity>
+          </View>
+        </View>
+      )}
+    </>
+  );
+
+  return (
+    // 🟢 FIX: Replaced SafeAreaView with standard View + insets padding, mimicking GossipsChatScreen perfectly
+    <View style={[styles.container, { paddingTop: insets.top }]}>
+      <View style={styles.topNav}>
+       <TouchableOpacity onPress={handleBackNavigation} hitSlop={{ top: 15, bottom: 15, left: 15, right: 15 }}><Feather name="arrow-left" size={24} color={colors.text} /></TouchableOpacity>
+        <TouchableOpacity onPress={() => flatListRef.current?.scrollToOffset({ offset: 0, animated: true })}><Text style={styles.brandTitle}>POST</Text></TouchableOpacity>
+        <View style={{ width: 24 }} />
+      </View>
+
+      {/* 🟢 FIX: Exact iOS/Android split you used successfully in GossipsChatScreen */}
+      {Platform.OS === 'ios' ? (
+        <KeyboardAvoidingView style={{ flex: 1 }} behavior="padding">
+          {screenContent}
+        </KeyboardAvoidingView>
+      ) : (
+        <View style={{ flex: 1, paddingBottom: keyboardHeight }}>
+          {screenContent}
+        </View>
+      )}
+
+      <Modal visible={actionModal.visible} transparent={true} animationType="fade">
+        <View style={styles.modalOverlay}>
+          <TouchableOpacity style={{ flex: 1 }} onPress={() => setActionModal({ ...actionModal, visible: false })} />
+          <View style={[styles.confirmModalContent, { paddingBottom: Math.max(insets.bottom, 20) }]}>
+            <Text style={[styles.confirmMessage, { color: colors.text }]}>{actionModal.message}</Text>
+            <TouchableOpacity style={styles.actionBtnDestructive} onPress={executeAction}>
+              <Text style={styles.actionBtnText}>{actionModal.type === 'DELETE' ? 'Delete' : 'Report'}</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={[styles.actionBtnCancel, { borderColor: colors.border }]} onPress={() => setActionModal({ ...actionModal, visible: false })}>
+              <Text style={[styles.actionBtnText, { color: colors.text }]}>Cancel</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+    </View>
   );
 }
 
-// 🟢 FIX: Instagram-Style Flat Comments (No boxy borders)
 const getStyles = (colors: any) => StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.background },
   topNav: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 20, paddingVertical: 15, backgroundColor: colors.background },
@@ -181,7 +214,13 @@ const getStyles = (colors: any) => StyleSheet.create({
   replyBtnText: { color: colors.textMuted, fontSize: 12, fontWeight: '600' },
   replyingIndicator: { flexDirection: 'row', justifyContent: 'space-between', paddingHorizontal: 16, paddingVertical: 10, backgroundColor: colors.surface },
   replyingText: { color: colors.textMuted, fontSize: 12, fontWeight: '600' },
-  composerContainer: { flexDirection: 'row', alignItems: 'flex-end', paddingHorizontal: 16, paddingVertical: 12, backgroundColor: colors.background, borderTopWidth: 1, borderTopColor: colors.border },
+  composerContainer: { flexDirection: 'row', alignItems: 'flex-end', paddingHorizontal: 16, paddingTop: 12, backgroundColor: colors.background, borderTopWidth: 1, borderTopColor: colors.border },
   commentInput: { flex: 1, color: colors.text, fontSize: 14, minHeight: 36, maxHeight: 100, marginRight: 12 },
   sendBtn: { justifyContent: 'center', alignItems: 'center', paddingBottom: 8 },
+  modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' },
+  confirmModalContent: { backgroundColor: colors.background, borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 24 },
+  confirmMessage: { fontSize: 16, fontWeight: '700', textAlign: 'center', marginBottom: 24 },
+  actionBtnDestructive: { backgroundColor: colors.danger, paddingVertical: 16, borderRadius: 12, alignItems: 'center', marginBottom: 12 },
+  actionBtnCancel: { paddingVertical: 16, borderRadius: 12, alignItems: 'center', borderWidth: 1 },
+  actionBtnText: { color: '#FFF', fontWeight: '800', fontSize: 15 }
 });

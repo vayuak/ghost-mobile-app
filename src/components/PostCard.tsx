@@ -9,11 +9,18 @@ import CommentsModal from './CommentsModal';
 import { useTheme } from '../context/ThemeContext'; 
 
 interface PostCardProps {
-  post: any; currentUsername?: string; onDelete?: (postId: any) => void; isVisible?: boolean; onUserTap?: () => void; onCommentTap?: () => void; 
+  post: any; 
+  currentUsername?: string; 
+  onDelete?: (postId: any) => void; 
+  isVisible?: boolean; 
+  onUserTap?: () => void; 
+  onCommentTap?: () => void; 
+  disableCommentAction?: boolean; // 🟢 FIX: Added to interface to resolve TS error
 }
+
 const parseNumeric = (val: any) => parseInt(String(val).replace(/[^0-9-]/g, ''), 10) || 0;
 
-export default function PostCard({ post, currentUsername: propUsername, onDelete, isVisible = true, onUserTap, onCommentTap }: PostCardProps) {
+export default function PostCard({ post, currentUsername: propUsername, onDelete, isVisible = true, onUserTap, onCommentTap, disableCommentAction }: PostCardProps) {
   const { colors, isDarkMode } = useTheme();
   const styles = getStyles(colors, isDarkMode);
   const isFocused = useIsFocused(); 
@@ -110,9 +117,12 @@ export default function PostCard({ post, currentUsername: propUsername, onDelete
           <TouchableOpacity onPress={() => handleVote('down')} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}><Feather name="chevron-down" size={24} color={userVote === 'down' ? colors.danger : colors.textMuted} /></TouchableOpacity>
         </View>
         <View style={{ flexDirection: 'row' }}>
-          <TouchableOpacity style={styles.actionBtnIcon} onPress={onCommentTap || (() => setCommentsVisible(true))}>
-            <Feather name="message-circle" size={22} color={colors.text} /><Text style={styles.actionText}>{commentCount}</Text>
-          </TouchableOpacity>
+          {/* 🟢 FIX: Comment button is hidden when disableCommentAction is true */}
+          {!disableCommentAction && (
+            <TouchableOpacity style={styles.actionBtnIcon} onPress={onCommentTap || (() => setCommentsVisible(true))}>
+              <Feather name="message-circle" size={22} color={colors.text} /><Text style={styles.actionText}>{commentCount}</Text>
+            </TouchableOpacity>
+          )}
           <TouchableOpacity style={styles.actionBtnIcon} onPress={handleShare}><Feather name="send" size={22} color={colors.text} /></TouchableOpacity>
         </View>
       </View>
@@ -122,7 +132,6 @@ export default function PostCard({ post, currentUsername: propUsername, onDelete
   );
 }
 
-// 🟢 FIX: 100% borderless, seamless feed rendering
 const getStyles = (colors: any, isDarkMode: boolean) => StyleSheet.create({
   card: { backgroundColor: colors.background, paddingVertical: 16, marginBottom: 16 }, 
   cardHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12, paddingHorizontal: 16 },

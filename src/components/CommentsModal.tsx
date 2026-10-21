@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { StyleSheet, Text, View, TextInput, TouchableOpacity, FlatList, KeyboardAvoidingView, Platform, Image, ActivityIndicator, Modal, Keyboard, Alert } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context'; // 🟢 ADDED
 import { apiClient, BASE_URL, API_ROUTES } from '../services/api';
 import Toast from 'react-native-toast-message';
 import { useTheme } from '../context/ThemeContext'; 
@@ -19,6 +20,7 @@ export default function CommentsModal({ visible, postId, currentUsername, onClos
   const { colors, isDarkMode } = useTheme();
   const styles = getStyles(colors, isDarkMode);
   const navigation = useNavigation<any>(); 
+  const insets = useSafeAreaInsets(); // 🟢 ADDED
   
   const [comments, setComments] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
@@ -30,6 +32,7 @@ export default function CommentsModal({ visible, postId, currentUsername, onClos
   const [keyboardHeight, setKeyboardHeight] = useState(0);
 
   useEffect(() => {
+    // Track keyboard for Android manual padding fallback
     if (Platform.OS === 'android') {
       const showSub = Keyboard.addListener('keyboardDidShow', (e) => setKeyboardHeight(e.endCoordinates.height));
       const hideSub = Keyboard.addListener('keyboardDidHide', () => setKeyboardHeight(0));
@@ -43,7 +46,6 @@ export default function CommentsModal({ visible, postId, currentUsername, onClos
 
   const fetchComments = async () => {
     try {
-      // Note: Adjust API_ROUTES.POSTS or POST based on your exact api.ts structure
       const data = await apiClient.get(API_ROUTES.POSTS.GET_COMMENTS(postId, Date.now()));
       setComments(data || []);
     } catch (error) { console.warn("Fetch failed"); } 
@@ -140,7 +142,12 @@ export default function CommentsModal({ visible, postId, currentUsername, onClos
     <Modal visible={visible} animationType="slide" transparent={true} onRequestClose={onClose}>
       <View style={styles.modalOverlay}>
         <TouchableOpacity style={styles.dismissArea} activeOpacity={1} onPress={onClose} />
-        <KeyboardAvoidingView style={[styles.bottomSheetContainer, Platform.OS === 'android' && { paddingBottom: keyboardHeight }]} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+        {/* 🟢 FIX: Added keyboardVerticalOffset for iOS modals */}
+        <KeyboardAvoidingView 
+          style={[styles.bottomSheetContainer, Platform.OS === 'android' && { paddingBottom: keyboardHeight }]} 
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+          keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 0}
+        >
           <View style={styles.sheetHeader}>
             <Text style={styles.headerTitle}>Comments</Text>
             <TouchableOpacity onPress={onClose} hitSlop={{ top: 15, bottom: 15, left: 15, right: 15 }}><Feather name="x" size={24} color={colors.text} /></TouchableOpacity>
@@ -157,9 +164,15 @@ export default function CommentsModal({ visible, postId, currentUsername, onClos
             </View>
           )}
 
-          <View style={styles.inputContainer}>
+          {/* 🟢 FIX: Added dynamic bottom padding to clear the iOS Home Indicator */}
+          <View style={[styles.inputContainer, { paddingBottom: Math.max(insets.bottom, 12) }]}>
             <TextInput ref={inputRef} style={styles.input} placeholder="Add a comment..." placeholderTextColor={colors.textMuted} value={newComment} onChangeText={setNewComment} multiline maxLength={500} />
-            <TouchableOpacity style={[styles.sendButton, !newComment.trim() && { opacity: 0.5 }]} onPress={handleSend} disabled={!newComment.trim() || isSubmitting}>
+            {/* 🟢 FIX: Changed onPress to onPressIn to beat the keyboard dismiss layout shift */}
+            <TouchableOpacity 
+              style={[styles.sendButton, !newComment.trim() && { opacity: 0.5 }]} 
+              onPressIn={handleSend} 
+              disabled={!newComment.trim() || isSubmitting}
+            >
               {isSubmitting ? <ActivityIndicator size="small" color="#FFF" /> : <Feather name="arrow-up" size={20} color="#FFF" />}
             </TouchableOpacity>
           </View>
@@ -189,7 +202,7 @@ const getStyles = (colors: any, isDarkMode: boolean) => StyleSheet.create({
   emptyText: { color: colors.textMuted, textAlign: 'center', marginTop: 40, fontSize: 14 },
   replyingIndicator: { flexDirection: 'row', justifyContent: 'space-between', paddingHorizontal: 16, paddingVertical: 12, backgroundColor: colors.surface },
   replyingText: { color: colors.textMuted, fontSize: 12, fontWeight: '600' },
-  inputContainer: { flexDirection: 'row', alignItems: 'flex-end', paddingHorizontal: 16, paddingVertical: 12, backgroundColor: colors.background },
+  inputContainer: { flexDirection: 'row', alignItems: 'flex-end', paddingHorizontal: 16, paddingTop: 12, backgroundColor: colors.background }, // Removed hardcoded paddingBottom
   input: { flex: 1, backgroundColor: colors.surface, color: colors.text, borderRadius: 24, paddingHorizontal: 16, paddingTop: 12, paddingBottom: 12, fontSize: 15, maxHeight: 100 },
   sendButton: { width: 44, height: 44, borderRadius: 22, backgroundColor: colors.primary, justifyContent: 'center', alignItems: 'center', marginLeft: 10 },
 });

@@ -68,7 +68,10 @@ export default function GossipsInboxScreen({ navigation }: any) {
     <SafeAreaView style={styles.container} edges={['top']}>
       <View style={styles.header}>
         <Text style={styles.headerTitle}>CHATS</Text>
-        <TouchableOpacity hitSlop={{ top: 15, bottom: 15, left: 15, right: 15 }} onPress={() => navigation.navigate('Home', { autoSearch: '@' })}><Feather name="edit" size={20} color={colors.text} /></TouchableOpacity>
+        {/* 🟢 FIX: Added `merge: true` so the parameter forces an update on the Home tab */}
+        <TouchableOpacity hitSlop={{ top: 15, bottom: 15, left: 15, right: 15 }} onPress={() => navigation.navigate({ name: 'Home', params: { autoSearch: '@' }, merge: true })}>
+          <Feather name="edit" size={20} color={colors.text} />
+        </TouchableOpacity>
       </View>
 
       {isLoading ? <ActivityIndicator size="large" color={colors.textMuted} style={{ marginTop: 50 }} /> : (
@@ -84,7 +87,6 @@ export default function GossipsInboxScreen({ navigation }: any) {
                   <View style={styles.threadHeader}><Text style={styles.threadUsername} numberOfLines={1}>@{item.targetUser}</Text><Text style={styles.threadTime}>{formatTime(item.timestamp)}</Text></View>
                   <View style={styles.threadFooter}>
                     <Text style={[styles.threadLastMessage, item.unreadCount > 0 && styles.threadLastMessageUnread]} numberOfLines={1}>{item.lastMessage}</Text>
-                    {/* 🟢 FIX: Exact WhatsApp Badge Styling */}
                     {item.unreadCount > 0 && <View style={styles.unreadBadge}><Text style={styles.unreadBadgeText}>{item.unreadCount}</Text></View>}
                   </View>
                 </View>
@@ -100,7 +102,6 @@ export default function GossipsInboxScreen({ navigation }: any) {
   );
 }
 
-// 🟢 FIX: Removed `borderBottomWidth` from threadRow
 const getStyles = (colors: any) => StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.background },
   header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 20, paddingVertical: 15, backgroundColor: colors.background },
