@@ -23,6 +23,7 @@ export default function GossipsChatScreen({ route, navigation }: any) {
 
   const [messages, setMessages] = useState<MessageItem[]>([]);
   const [chatInput, setChatInput] = useState('');
+  const textRef = useRef(''); // Added to synchronously catch predictive text
   const [activeUser, setActiveUser] = useState('');
   const [targetAvatar, setTargetAvatar] = useState<string | null>(null);
   const [authToken, setAuthToken] = useState<string | null>(null); 
@@ -89,10 +90,13 @@ export default function GossipsChatScreen({ route, navigation }: any) {
   };
 
   const handleSend = () => {
-    const text = chatInput.trim();
-    if (!text) return;
+    const text = textRef.current;
+    if (!text || text.length === 0) return;
     if (cryptoState !== 'ready') return Alert.alert('Cannot encrypt', 'Encryption keys are not ready.'); 
+    
     setChatInput('');
+    textRef.current = '';
+    
     const msgId = `${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
     saveLocalMessage(roomIdRef.current, activeUserRef.current, text, null, null, targetUser, msgId, new Date().toISOString(), false, true, 'pending');
     kickOutbox(); 
@@ -101,7 +105,7 @@ export default function GossipsChatScreen({ route, navigation }: any) {
   const handleChatOptions = () => {
     Alert.alert('Chat Options', `Manage conversation with @${targetUser}`, [
         { text: 'Clear Chat', onPress: () => { clearLocalMessages(roomIdRef.current, true, targetUser, activeUserRef.current); setMessages([]); }},
-        { text: 'Report User', onPress: () => { apiClient.post('/v1/social/moderation/report', { reportedUsername: targetUser, type: 'USER_REPORT' }).catch(()=>{}); Alert.alert('Reported', 'User reported.'); }},
+        { text: 'Report User', onPress: () => { apiClient.post(API_ROUTES.CAMPFIRE.REPORT(targetUser)).catch(()=>{}); Alert.alert('Reported', 'User reported.'); }},
         { text: 'Block User', style: 'destructive', onPress: () => { blockLocalUser(targetUser); navigation.navigate('MainTabs', { screen: 'Gossips' }); }},
         { text: 'Cancel', style: 'cancel' }
       ], { cancelable: true }
@@ -154,9 +158,19 @@ export default function GossipsChatScreen({ route, navigation }: any) {
 
       <View style={[styles.composer, { paddingBottom: Math.max(insets.bottom, 10) }]}>
         <View style={styles.inputContainer}>
-          <TextInput style={styles.input} value={chatInput} onChangeText={setChatInput} placeholder={`Message...`} placeholderTextColor={colors.textMuted} multiline />
-          {chatInput.trim().length > 0 && (
-            <TouchableOpacity style={styles.sendIcon} onPress={handleSend}><Feather name="send" size={20} color={colors.primary} /></TouchableOpacity>
+          <TextInput 
+            style={styles.input} 
+            value={chatInput} 
+            onChangeText={(val) => { textRef.current = val; setChatInput(val); }} 
+            placeholder={`Message...`} 
+            placeholderTextColor={colors.textMuted} 
+            multiline 
+            blurOnSubmit={false}
+          />
+          {chatInput.length > 0 && (
+            <TouchableOpacity style={styles.sendIcon} onPressIn={handleSend}>
+              <Feather name="send" size={20} color={colors.primary} />
+            </TouchableOpacity>
           )}
         </View>
       </View>
@@ -184,7 +198,6 @@ export default function GossipsChatScreen({ route, navigation }: any) {
   );
 }
 
-// 🟢 FIX: Borderless, clean chat bubbles and input composer
 const getStyles = (colors: any, isDarkMode: boolean) => StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.background },
   header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16, paddingBottom: 12, paddingTop: 10, backgroundColor: colors.background, borderBottomWidth: 1, borderBottomColor: colors.border },
