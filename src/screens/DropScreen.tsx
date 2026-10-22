@@ -195,19 +195,45 @@ export const DropsScreen = ({ onUnreadCountChange, navigation }: any) => {
             renderItem={({ item }) => {
               const cleanCurrentUsername = currentUsername.replace(/^@/, '').trim().toLowerCase();
               const isSelf = item.username === cleanCurrentUsername && cleanCurrentUsername.length > 0;
+              
+              // 🟢 THE UI FIX: Detect system warnings
+              const isSystem = item.username.toLowerCase() === 'system' || item.username.toLowerCase() === 'system_ai';
+
               return (
                 <View style={[styles.messageRow, isSelf ? styles.messageRowSelf : styles.messageRowOther]}>
                   {!isSelf && (
-                    <View style={[styles.bubble, styles.bubbleOther]}>
+                    <View style={[styles.bubble, isSystem ? styles.bubbleSystem : styles.bubbleOther]}>
                       <View style={styles.bubbleHeader}>
-                        {item.avatarUrl ? <Image source={getSecureImageSource(item.avatarUrl)} style={styles.airdropAvatarImage} /> : <View style={styles.airdropAvatarFallback}><Text style={styles.airdropAvatarText}>{item.username[0]?.toUpperCase()}</Text></View>}
-                        <Text style={styles.senderName}>@{item.username}</Text>
+                        {item.avatarUrl && !isSystem ? (
+                           <Image source={getSecureImageSource(item.avatarUrl)} style={styles.airdropAvatarImage} />
+                        ) : (
+                           <View style={[styles.airdropAvatarFallback, isSystem && { backgroundColor: colors.danger }]}>
+                             <Text style={[styles.airdropAvatarText, isSystem && { color: '#FFF' }]}>
+                               {isSystem ? '⚠️' : item.username[0]?.toUpperCase()}
+                             </Text>
+                           </View>
+                        )}
+                        <Text style={[styles.senderName, isSystem && { color: colors.danger }]}>
+                          @{item.username}
+                        </Text>
                         <Text style={styles.distanceMeta}>• {item.distanceInMeters}m</Text>
                       </View>
-                      <DropContent drop={item} isSelf={isSelf} />
+                      
+                      {isSystem ? (
+                          <Text style={[styles.messageText, { color: colors.danger, fontWeight: '600' }]}>{item.statusMessage}</Text>
+                      ) : (
+                          <DropContent drop={item} isSelf={isSelf} />
+                      )}
                     </View>
                   )}
-                  {!isSelf && <TouchableOpacity style={styles.reportIcon} onPress={() => handleReportUser(item.username)}><Feather name="flag" size={14} color={colors.textMuted} /></TouchableOpacity>}
+                  
+                  {/* Hide report flag on system messages */}
+                  {!isSelf && !isSystem && (
+                     <TouchableOpacity style={styles.reportIcon} onPress={() => handleReportUser(item.username)}>
+                       <Feather name="flag" size={14} color={colors.textMuted} />
+                     </TouchableOpacity>
+                  )}
+                  
                   {isSelf && <View style={[styles.bubble, styles.bubbleSelf]}><DropContent drop={item} isSelf={isSelf} /></View>}
                 </View>
               );
@@ -227,7 +253,6 @@ const getStyles = (colors: any, isDarkMode: boolean) => StyleSheet.create({
   switchContainer: { flexDirection: 'row', alignItems: 'center' },
   switchLabel: { color: colors.textMuted, fontSize: 11, fontWeight: '800', marginRight: 8 },
   topInputContainer: { backgroundColor: colors.background, borderBottomWidth: 1, borderBottomColor: colors.border, flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingBottom: 12, paddingTop: 8 },
-  // 🟢 FIX: Borderless, clean input field
   topInput: { flex: 1, backgroundColor: colors.surface, color: colors.text, borderRadius: 20, paddingHorizontal: 16, paddingTop: 10, paddingBottom: 10, fontSize: 15, marginRight: 10, minHeight: 40, maxHeight: 100 },
   sendButton: { width: 40, height: 40, borderRadius: 20, backgroundColor: colors.text, justifyContent: 'center', alignItems: 'center' },
   sendButtonDisabled: { backgroundColor: colors.surface },
@@ -240,7 +265,6 @@ const getStyles = (colors: any, isDarkMode: boolean) => StyleSheet.create({
   messageRowSelf: { justifyContent: 'flex-end' },
   messageRowOther: { justifyContent: 'flex-start' },
   bubble: { maxWidth: '80%', paddingHorizontal: 14, paddingVertical: 10, borderRadius: 18 },
-  // 🟢 FIX: Pure color bubbles with subtle shadow, NO rigid borders
   bubbleSelf: { backgroundColor: colors.surface, borderTopLeftRadius: 18, borderBottomLeftRadius: 18, borderTopRightRadius: 18, borderBottomRightRadius: 4, shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.05, shadowRadius: 2, elevation: 1 },
   bubbleOther: { backgroundColor: colors.surface, borderTopLeftRadius: 18, borderBottomRightRadius: 18, borderTopRightRadius: 18, borderBottomLeftRadius: 4, shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.05, shadowRadius: 2, elevation: 1 },
   bubbleHeader: { flexDirection: 'row', alignItems: 'center', marginBottom: 6 },
@@ -254,4 +278,14 @@ const getStyles = (colors: any, isDarkMode: boolean) => StyleSheet.create({
   warningBox: { backgroundColor: isDarkMode ? '#332701' : '#FFFBEB', padding: 10, borderRadius: 8, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: colors.warning, marginTop: 4 },
   warningTitle: { color: colors.warning, fontSize: 13, fontWeight: 'bold', marginTop: 4 },
   warningSubText: { color: colors.textMuted, fontSize: 11, marginTop: 2 },
+
+  bubbleSystem: { 
+    backgroundColor: isDarkMode ? '#3A1010' : '#FFEEEE', 
+    borderTopLeftRadius: 18, 
+    borderBottomRightRadius: 18, 
+    borderTopRightRadius: 18, 
+    borderBottomLeftRadius: 4, 
+    borderWidth: 1, 
+    borderColor: colors.error 
+  },
 });

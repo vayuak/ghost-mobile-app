@@ -183,15 +183,15 @@ export default function ProfileScreen({ navigation, onLogoutTrigger }: any) {
 
             {/* 🟢 Maintained your support & help links here */}
             <Text style={[styles.menuSectionHeader, { marginTop: 16 }]}>SUPPORT & HELP</Text>
-            <TouchableOpacity style={styles.menuItemRow} onPress={() => Linking.openURL('https://viacustos.com')}>
+            <TouchableOpacity style={styles.menuItemRow} onPress={() => Linking.openURL('https://viacustos.github.io/publicinfo/')}>
               <Text style={styles.menuText}>Report a Bug</Text>
               <Feather name="external-link" size={16} color={colors.textMuted} />
             </TouchableOpacity>
-            <TouchableOpacity style={styles.menuItemRow} onPress={() => Linking.openURL('https://viacustos.com')}>
+            <TouchableOpacity style={styles.menuItemRow} onPress={() => Linking.openURL('https://viacustos.github.io/publicinfo/')}>
               <Text style={styles.menuText}>Suggest a Feature</Text>
               <Feather name="external-link" size={16} color={colors.textMuted} />
             </TouchableOpacity>
-            <TouchableOpacity style={styles.menuItemRow} onPress={() => Linking.openURL('https://viacustos.com')}>
+            <TouchableOpacity style={styles.menuItemRow} onPress={() => Linking.openURL('https://viacustos.github.io/publicinfo/')}>
               <Text style={styles.menuText}>Help & FAQ</Text>
               <Feather name="help-circle" size={16} color={colors.textMuted} />
             </TouchableOpacity>
@@ -201,8 +201,8 @@ export default function ProfileScreen({ navigation, onLogoutTrigger }: any) {
             </TouchableOpacity>
 
             <Text style={[styles.menuSectionHeader, { marginTop: 16 }]}>LEGAL</Text>
-            <TouchableOpacity style={styles.menuItemRow} onPress={() => Linking.openURL('https://viacustos.com/terms')}><Text style={styles.menuText}>Terms of Service</Text></TouchableOpacity>
-            <TouchableOpacity style={styles.menuItemRow} onPress={() => Linking.openURL('https://viacustos.com/privacy')}><Text style={styles.menuText}>Privacy Policy</Text></TouchableOpacity>
+            <TouchableOpacity style={styles.menuItemRow} onPress={() => Linking.openURL('https://viacustos.github.io/publicinfo/')}><Text style={styles.menuText}>Terms of Service</Text></TouchableOpacity>
+            <TouchableOpacity style={styles.menuItemRow} onPress={() => Linking.openURL('https://viacustos.github.io/publicinfo/')}><Text style={styles.menuText}>Privacy Policy</Text></TouchableOpacity>
 
             <TouchableOpacity style={[styles.menuItemRow, { marginTop: 20 }]} onPress={handleLogout}>
               <Feather name="log-out" size={18} color={colors.danger} /><Text style={[styles.menuText, { color: colors.danger, marginLeft: 10 }]}>Logout</Text>
