@@ -205,7 +205,7 @@ export default function AuthScreen({ onAuthSuccess }: { onAuthSuccess: () => voi
                 {currentMode === 'REGISTER' ? (
                   <TouchableOpacity style={styles.consentRow} onPress={() => setHasConsented(!hasConsented)} activeOpacity={0.8}>
                     <View style={[styles.checkbox, hasConsented && styles.checkboxActive]}>{hasConsented && <Feather name="check" size={14} color="#FFF" />}</View>
-                    <Text style={styles.consentText}>I agree to the <Text style={styles.linkText} onPress={() => Linking.openURL('https://viacustos.com/terms')}>Terms</Text> and <Text style={styles.linkText} onPress={() => Linking.openURL('https://viacustos.com/privacy')}>Privacy Policy</Text>.</Text>
+                    <Text style={styles.consentText}>I agree to the <Text style={styles.linkText} onPress={() => Linking.openURL('https://viacustos.github.io/publicinfo/')}>Terms</Text> and <Text style={styles.linkText} onPress={() => Linking.openURL('https://viacustos.github.io/publicinfo/')}>Privacy Policy</Text>.</Text>
                   </TouchableOpacity>
                 ) : (
                   <View style={{ marginTop: 12 }}>
