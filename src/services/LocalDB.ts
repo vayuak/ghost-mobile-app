@@ -199,7 +199,26 @@ export const clearLocalMessages = (
 
   DeviceEventEmitter.emit('db_chats_updated'); 
 };
-
+// 🟢 FIXED: Removed generic type argument and corrected column name from msgId to msg_id
+export const getMessageStatusFromDb = (msgId: string): string | null => {
+  if (!db || isWeb) return null;
+  let status: string | null = null;
+  try {
+    db.withTransactionSync(() => {
+      const result = db.getAllSync(
+        'SELECT status FROM messages WHERE msg_id = ? LIMIT 1', 
+        [msgId]
+      ) as Array<{ status: string }>;
+      
+      if (result && result.length > 0) {
+        status = result[0].status;
+      }
+    });
+  } catch (error) {
+    console.warn("Failed to get message status:", error);
+  }
+  return status;
+};
 export const hasLocalMessage = (msgId: string): boolean => {
   if (isWeb || !msgId) return false;
   initLocalDatabase();

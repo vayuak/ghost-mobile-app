@@ -10,10 +10,6 @@ import { decryptFromPeer, encryptForPeer } from './CryptoVault';
 import { currentActiveChat } from '../screens/GossipsChatScreen';
 import { peekAvatarUrl, getAvatarUrl } from './ProfileCache';
 
-Notifications.setNotificationHandler({
-  handleNotification: async () => ({ shouldPlaySound: true, shouldSetBadge: true, shouldShowBanner: true, shouldShowList: true }),
-});
-
 type Receipt = 'delivered' | 'read';
 type Ctx = { kickOutbox: () => void; resync: () => void; sendReceipt: (sender: string, msgIds: string[], s: Receipt) => void };
 const NetworkContext = createContext<Ctx>({ kickOutbox: () => {}, resync: () => {}, sendReceipt: () => {} });
@@ -38,6 +34,7 @@ export const GlobalNetworkManager: React.FC<{ children: React.ReactNode }> = ({ 
   };
 
   // Outbox: every outgoing message is saved as 'pending' first, then sent from here.
+  // The chat server stores the encrypted message and sends the push notification itself, so the app does not trigger pushes.
   const flushOutbox = async () => {
     if (flushingRef.current || !clientRef.current?.connected) return;
     flushingRef.current = true;
@@ -50,6 +47,7 @@ export const GlobalNetworkManager: React.FC<{ children: React.ReactNode }> = ({ 
             targetUsername: row.target, sentAt: row.sentAt,
             ephemeralPublicKey: env.senderPublicKey, ciphertext: env.ciphertext, iv: env.iv,
           });
+
           if (!ok) break; // socket dropped; row stays 'pending' and goes out on the next connect
         } catch {
           setMessageStatus(row.msgId, 'failed');
@@ -133,23 +131,23 @@ export const GlobalNetworkManager: React.FC<{ children: React.ReactNode }> = ({ 
 
         const client: Client = new Client({
           brokerURL: P2P_WS_URL,
-          forceBinaryWSFrames: true,          // correct spelling; NO `as any` so typos fail to compile
+          forceBinaryWSFrames: true,
           appendMissingNULLonIncoming: true,
           heartbeatIncoming: 20000,
           heartbeatOutgoing: 20000,
           reconnectDelay: 3000,
-          connectionTimeout: 10000,           // socket open but no CONNECTED within 10s -> retry
+          connectionTimeout: 10000,
           debug: __DEV__ ? (s) => console.log('[STOMP]', s) : () => {},
-          beforeConnect: async () => {        // fresh token on every (re)connect
+          beforeConnect: async () => {
             const t = await AsyncStorage.getItem('@ghost_token');
             client.connectHeaders = { Authorization: `Bearer ${t}` };
           },
           onConnect: () => {
-            client.subscribe(`/topic/shadow-user-${me}`, onFrame(me));  // subscribe FIRST
+            client.subscribe(`/topic/shadow-user-${me}`, onFrame(me));
             syncOfflineMessages(me).catch(e => console.warn('[SYNC]', e?.message)).finally(flushOutbox);
           },
-          onStompError: f => console.error('[STOMP] ERROR frame:', f.headers['message'], f.body),
-          onWebSocketClose: e => console.log('[STOMP] socket closed', e?.code, e?.reason),
+          onStompError: f => console.warn('[STOMP] ERROR frame:', f.headers['message']),
+          onWebSocketClose: e => { if (__DEV__) console.log('[STOMP] socket closed', e?.code, e?.reason); },
         });
         clientRef.current = client;
         client.activate();
@@ -167,7 +165,7 @@ export const GlobalNetworkManager: React.FC<{ children: React.ReactNode }> = ({ 
       if (c.connected) {
         syncOfflineMessages(meRef.current).catch(() => {});
       } else {
-        clientRef.current = null;            // replace the dead client; never stack a second one
+        clientRef.current = null;
         c.deactivate().finally(start);
       }
     });

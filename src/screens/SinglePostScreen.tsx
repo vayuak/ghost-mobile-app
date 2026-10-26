@@ -3,10 +3,12 @@ import { StyleSheet, View, TouchableOpacity, ActivityIndicator, Text, FlatList, 
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Feather } from '@expo/vector-icons';
 import { useIsFocused, useNavigation } from '@react-navigation/native';
+import Toast from 'react-native-toast-message';
 import { apiClient, API_ROUTES, BASE_URL } from '../services/api';
+import { isUserBlocked } from '../services/LocalDB';
 import PostCard from '../components/PostCard';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { useTheme } from '../context/ThemeContext'; 
+import { useTheme } from '../context/ThemeContext';
 
 export default function SinglePostScreen({ route }: any) {
   const { colors } = useTheme();
@@ -16,23 +18,23 @@ export default function SinglePostScreen({ route }: any) {
   const { postId } = route.params;
   const isFocused = useIsFocused();
   const flatListRef = useRef<FlatList>(null);
-  
+
   const [post, setPost] = useState<any>(null);
   const [comments, setComments] = useState<any[]>([]);
   const [commentInput, setCommentInput] = useState('');
   const [replyingTo, setReplyingTo] = useState<any | null>(null);
   const inputRef = useRef<TextInput>(null);
-  
+
   const [isLoading, setIsLoading] = useState(true);
   const [isSending, setIsSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [activeUser, setActiveUser] = useState('');
   const [authToken, setAuthToken] = useState<string | null>(null);
-  
-  const [keyboardHeight, setKeyboardHeight] = useState(0); 
+
+  const [keyboardHeight, setKeyboardHeight] = useState(0);
   const [actionModal, setActionModal] = useState({ visible: false, targetId: null as any, type: '', message: '' });
 
-  // 🟢 FIX: Exactly like GossipsChatScreen, only track manual keyboard height on Android
+  // Android: track the keyboard manually (same approach as the chat screen)
   useEffect(() => {
     if (Platform.OS === 'android') {
       const showSub = Keyboard.addListener('keyboardDidShow', (e) => setKeyboardHeight(e.endCoordinates.height));
@@ -53,17 +55,22 @@ export default function SinglePostScreen({ route }: any) {
       setPost(postResponse);
       const commentsResponse = await apiClient.get(API_ROUTES.POSTS.GET_COMMENTS(postId, Date.now()));
       setComments(commentsResponse || []);
-    } catch (err) { setError("This post may have been deleted."); } finally { setIsLoading(false); }
+      setError(null);
+    } catch (err) { setError('This post may have been deleted.'); } finally { setIsLoading(false); }
   };
 
   const handleSendComment = async () => {
-    if (!commentInput.trim()) return;
+    const text = commentInput.trim();
+    if (!text) return;
     setIsSending(true);
     try {
-      await apiClient.post(API_ROUTES.POSTS.CREATE_COMMENT(postId), { content: commentInput.trim(), parentId: replyingTo ? replyingTo.id : null });
+      await apiClient.post(API_ROUTES.POSTS.CREATE_COMMENT(postId), { content: text, parentId: replyingTo ? replyingTo.id : null });
       setCommentInput(''); setReplyingTo(null);
       await fetchPostAndComments();
-    } catch (err) { } finally { setIsSending(false); }
+    } catch (err: any) {
+      // The server explains why a comment was rejected (links / phone numbers / promotions, or too many comments).
+      Toast.show({ type: 'error', text1: 'Could not post comment', text2: err?.message || 'Please try again.' });
+    } finally { setIsSending(false); }
   };
 
   const executeAction = async () => {
@@ -77,14 +84,19 @@ export default function SinglePostScreen({ route }: any) {
       } else if (type === 'REPORT') {
         await apiClient.post(API_ROUTES.MODERATION.REPORT, { targetId, type: 'COMMENT_REPORT' });
         setComments(prev => prev.filter(c => c.id !== targetId && c.parentId !== targetId));
+        Toast.show({ type: 'success', text1: 'Reported', text2: 'Thanks. This comment is hidden and will be reviewed.' });
       }
-    } catch (e) { }
+    } catch (e: any) {
+      Toast.show({ type: 'error', text1: 'Something went wrong', text2: e?.message || 'Please try again.' });
+    }
   };
 
   const handleBackNavigation = () => { if (navigation.canGoBack()) navigation.goBack(); else navigation.reset({ index: 0, routes: [{ name: 'MainTabs' }] }); };
 
+  const visibleComments = comments.filter(c => !isUserBlocked(String(c.username || '')));
+
   const renderComment = ({ item }: { item: any }) => {
-    const isReply = item.parentId !== null;
+    const isReply = item.parentId !== null && item.parentId !== undefined;
     const rawAvatar = item.avatarUrl || item.profilePictureUrl || item.profile?.avatarUrl;
     const avatarUri = rawAvatar ? (rawAvatar.startsWith('http') ? rawAvatar : `${BASE_URL}${rawAvatar}`) : null;
     const cleanAuthor = item.username?.toLowerCase() || '';
@@ -99,9 +111,9 @@ export default function SinglePostScreen({ route }: any) {
           <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
             <Text style={styles.commentUsername}>@{cleanAuthor}</Text>
             {isMyComment ? (
-               <TouchableOpacity onPress={() => setActionModal({ visible: true, targetId: item.id, type: 'DELETE', message: 'Delete this comment permanently?' })} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}><Feather name="trash-2" size={14} color={colors.danger}/></TouchableOpacity>
+              <TouchableOpacity onPress={() => setActionModal({ visible: true, targetId: item.id, type: 'DELETE', message: 'Delete this comment permanently?' })} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}><Feather name="trash-2" size={14} color={colors.danger} /></TouchableOpacity>
             ) : (
-               <TouchableOpacity onPress={() => setActionModal({ visible: true, targetId: item.id, type: 'REPORT', message: 'Flag this comment for review?' })} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}><Feather name="flag" size={12} color={colors.textMuted}/></TouchableOpacity>
+              <TouchableOpacity onPress={() => setActionModal({ visible: true, targetId: item.id, type: 'REPORT', message: 'Flag this comment for review?' })} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}><Feather name="flag" size={12} color={colors.textMuted} /></TouchableOpacity>
             )}
           </View>
           <Text style={styles.commentText}>{item.content}</Text>
@@ -113,16 +125,15 @@ export default function SinglePostScreen({ route }: any) {
     );
   };
 
-  // 🟢 FIX: Packaged the scrollview and input perfectly inside a variable for OS-specific wrapping
   const screenContent = (
     <>
       <View style={styles.content}>
         {isLoading ? <ActivityIndicator size="large" color={colors.textMuted} style={{ marginTop: 50 }} /> : error || !post ? (
-          <View style={styles.errorContainer}><Feather name="alert-circle" size={40} color={colors.textMuted} /><Text style={styles.errorText}>{error || "Post not found"}</Text></View>
+          <View style={styles.errorContainer}><Feather name="alert-circle" size={40} color={colors.textMuted} /><Text style={styles.errorText}>{error || 'Post not found'}</Text></View>
         ) : (
           <FlatList
-            ref={flatListRef} data={comments} keyExtractor={(item) => item.id.toString()} 
-            contentContainerStyle={{ paddingBottom: 20 }} 
+            ref={flatListRef} data={visibleComments} keyExtractor={(item) => item.id.toString()}
+            contentContainerStyle={{ paddingBottom: 20 }}
             keyboardShouldPersistTaps="handled"
             renderItem={renderComment}
             ListHeaderComponent={
@@ -144,9 +155,9 @@ export default function SinglePostScreen({ route }: any) {
               <TouchableOpacity onPress={() => setReplyingTo(null)}><Feather name="x" size={16} color={colors.text} /></TouchableOpacity>
             </View>
           )}
-          
+
           <View style={[styles.composerContainer, { paddingBottom: Math.max(insets.bottom, 12) }]}>
-            <TextInput ref={inputRef} style={styles.commentInput} placeholder="Add a comment..." placeholderTextColor={colors.textMuted} value={commentInput} onChangeText={setCommentInput} multiline maxLength={200} />
+            <TextInput ref={inputRef} style={styles.commentInput} placeholder="Add a comment (no links or promotions)..." placeholderTextColor={colors.textMuted} value={commentInput} onChangeText={setCommentInput} multiline maxLength={200} />
             <TouchableOpacity style={[styles.sendBtn, (!commentInput.trim() || isSending) && { opacity: 0.5 }]} onPress={handleSendComment} disabled={!commentInput.trim() || isSending}>
               {isSending ? <ActivityIndicator size="small" color={colors.primary} /> : <Text style={{ color: colors.primary, fontWeight: '700' }}>Post</Text>}
             </TouchableOpacity>
@@ -157,15 +168,13 @@ export default function SinglePostScreen({ route }: any) {
   );
 
   return (
-    // 🟢 FIX: Replaced SafeAreaView with standard View + insets padding, mimicking GossipsChatScreen perfectly
     <View style={[styles.container, { paddingTop: insets.top }]}>
       <View style={styles.topNav}>
-       <TouchableOpacity onPress={handleBackNavigation} hitSlop={{ top: 15, bottom: 15, left: 15, right: 15 }}><Feather name="arrow-left" size={24} color={colors.text} /></TouchableOpacity>
+        <TouchableOpacity onPress={handleBackNavigation} hitSlop={{ top: 15, bottom: 15, left: 15, right: 15 }}><Feather name="arrow-left" size={24} color={colors.text} /></TouchableOpacity>
         <TouchableOpacity onPress={() => flatListRef.current?.scrollToOffset({ offset: 0, animated: true })}><Text style={styles.brandTitle}>POST</Text></TouchableOpacity>
         <View style={{ width: 24 }} />
       </View>
 
-      {/* 🟢 FIX: Exact iOS/Android split you used successfully in GossipsChatScreen */}
       {Platform.OS === 'ios' ? (
         <KeyboardAvoidingView style={{ flex: 1 }} behavior="padding">
           {screenContent}

@@ -5,8 +5,9 @@ import { Feather } from '@expo/vector-icons';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { apiClient, API_ROUTES } from '../services/api';
 import { initializeDeviceKeys } from '../services/CryptoVault';
+import { LINKS } from '../constants/links';
 
-// 🟢 FORCED LIGHT THEME (Overrides system settings for Auth)
+// Forced light theme (overrides system settings for Auth)
 const lightAuthColors = {
   background: '#FFFFFF',
   surface: '#F5F5F7',
@@ -20,16 +21,16 @@ const lightAuthColors = {
 export default function AuthScreen({ onAuthSuccess }: { onAuthSuccess: () => void }) {
   const styles = getStyles();
   const [currentMode, setCurrentMode] = useState<'LOGIN' | 'REGISTER' | 'FORGOT_PASSWORD'>('LOGIN');
-  const [workflowStep, setWorkflowStep] = useState<1 | 2>(1); 
+  const [workflowStep, setWorkflowStep] = useState<1 | 2>(1);
   const [loading, setLoading] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   const [hasConsented, setHasConsented] = useState(false);
 
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
-  const [contactId, setContactId] = useState(''); 
+  const [contactId, setContactId] = useState('');
   const [otpCode, setOtpCode] = useState('');
-  
+
   const [uiMessage, setUiMessage] = useState<{ text: string, type: 'error' | 'success' } | null>(null);
   const [usernameStatus, setUsernameStatus] = useState<'AVAILABLE' | 'TAKEN' | null>(null);
 
@@ -37,7 +38,7 @@ export default function AuthScreen({ onAuthSuccess }: { onAuthSuccess: () => voi
     const backAction = () => {
       if (workflowStep === 2) { setWorkflowStep(1); return true; }
       if (currentMode !== 'LOGIN') { setCurrentMode('LOGIN'); setUiMessage(null); return true; }
-      return false; 
+      return false;
     };
     const backHandler = BackHandler.addEventListener('hardwareBackPress', backAction);
     return () => backHandler.remove();
@@ -47,7 +48,7 @@ export default function AuthScreen({ onAuthSuccess }: { onAuthSuccess: () => voi
     if (currentMode !== 'REGISTER' || username.length < 3) { setUsernameStatus(null); return; }
     const checkUsername = async () => {
       try {
-        const res = await apiClient.get(`${API_ROUTES.AUTH.CHECK_USERNAME}?username=${username}`);
+        const res = await apiClient.get(`${API_ROUTES.AUTH.CHECK_USERNAME}?username=${encodeURIComponent(username)}`);
         setUsernameStatus(res.available ? 'AVAILABLE' : 'TAKEN');
       } catch (e) { setUsernameStatus(null); }
     };
@@ -65,6 +66,7 @@ export default function AuthScreen({ onAuthSuccess }: { onAuthSuccess: () => voi
     if (msg.includes('incorrect') || msg.includes('bad credentials')) return 'Incorrect email or password.';
     if (msg.includes('contact method')) return 'Email already registered. Return to login.';
     if (msg.includes('identity signature')) return 'Username is already taken.';
+    if (msg.includes('status 429')) return 'Too many attempts. Please wait a minute and try again.';
     return err?.response?.data?.error || err?.message || 'An unexpected error occurred.';
   };
 
@@ -95,26 +97,26 @@ export default function AuthScreen({ onAuthSuccess }: { onAuthSuccess: () => voi
           const fallback = contactId.includes('@') ? contactId.split('@')[0] : contactId;
           await AsyncStorage.setItem('@active_username', fallback.toLowerCase().trim());
         }
-        onAuthSuccess(); 
+        onAuthSuccess();
       }
-    } catch (err: any) { setUiMessage({ text: sanitizeError(err), type: 'error' }); } 
+    } catch (err: any) { setUiMessage({ text: sanitizeError(err), type: 'error' }); }
     finally { setLoading(false); }
   };
 
   const handleRegister = async () => {
     setUiMessage(null);
-    if (!hasConsented) return Alert.alert("Consent Required", "You must agree to the Terms of Service.");
+    if (!hasConsented) return Alert.alert('Consent Required', 'Please confirm that you are 18 or older and agree to the Terms and Privacy Policy.');
     if (!username || !password || !contactId) return setUiMessage({ text: 'All fields are mandatory.', type: 'error' });
     if (!validateInput()) return;
-    
+
     setLoading(true);
     try {
       const cleanUsername = username.toLowerCase().trim();
       const realPublicKey = await initializeDeviceKeys(cleanUsername);
       await apiClient.post(API_ROUTES.AUTH.REGISTER, { username: cleanUsername, password, contactIdentifier: contactId.trim(), publicKey: realPublicKey });
-      setUiMessage({ text: `Verification code sent to ${contactId.trim()}`, type: 'success' }); 
-      setWorkflowStep(2); 
-    } catch (err: any) { setUiMessage({ text: sanitizeError(err), type: 'error' }); } 
+      setUiMessage({ text: `Verification code sent to ${contactId.trim()}`, type: 'success' });
+      setWorkflowStep(2);
+    } catch (err: any) { setUiMessage({ text: sanitizeError(err), type: 'error' }); }
     finally { setLoading(false); }
   };
 
@@ -125,15 +127,15 @@ export default function AuthScreen({ onAuthSuccess }: { onAuthSuccess: () => voi
     setLoading(true);
     try {
       await apiClient.post(API_ROUTES.AUTH.FORGOT_PASSWORD, { identifier: contactId.trim() });
-      setUiMessage({ text: `Recovery code sent to ${contactId.trim()}`, type: 'success' });
+      setUiMessage({ text: `If an account exists for ${contactId.trim()}, a recovery code was sent.`, type: 'success' });
       setWorkflowStep(2);
-    } catch (err: any) { setUiMessage({ text: sanitizeError(err), type: 'error' }); } 
+    } catch (err: any) { setUiMessage({ text: sanitizeError(err), type: 'error' }); }
     finally { setLoading(false); }
   };
 
   const handleVerifyOtp = async () => {
     setUiMessage(null);
-    if (currentMode === 'FORGOT_PASSWORD' && !isStrongPassword(password)) return setUiMessage({ text: 'Your new password must be at least 8 characters...', type: 'error' });
+    if (currentMode === 'FORGOT_PASSWORD' && !isStrongPassword(password)) return setUiMessage({ text: 'Your new password needs 8+ characters, 1 uppercase letter, 1 number and 1 special character.', type: 'error' });
     setLoading(true);
     try {
       if (currentMode === 'FORGOT_PASSWORD') {
@@ -145,7 +147,7 @@ export default function AuthScreen({ onAuthSuccess }: { onAuthSuccess: () => voi
         setUiMessage({ text: 'Verification complete. You can now login.', type: 'success' });
       }
       setTimeout(() => { setWorkflowStep(1); setCurrentMode('LOGIN'); setPassword(''); setOtpCode(''); }, 2000);
-    } catch (err: any) { setUiMessage({ text: sanitizeError(err), type: 'error' }); } 
+    } catch (err: any) { setUiMessage({ text: sanitizeError(err), type: 'error' }); }
     finally { setLoading(false); }
   };
 
@@ -156,42 +158,41 @@ export default function AuthScreen({ onAuthSuccess }: { onAuthSuccess: () => voi
   };
 
   const getHeaderTitle = () => {
-    if (currentMode === 'LOGIN') return "Sign In";
-    if (currentMode === 'REGISTER') return "Sign Up";
-    return "Reset Password";
+    if (currentMode === 'LOGIN') return 'Sign In';
+    if (currentMode === 'REGISTER') return 'Sign Up';
+    return 'Reset Password';
   };
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: lightAuthColors.background }}>
       <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={{ flex: 1 }}>
         <ScrollView contentContainerStyle={styles.container} keyboardShouldPersistTaps="handled">
-          
+
           <Text style={styles.brandTitle}>WarnPack</Text>
           <Text style={styles.brandSubtitle}>Explore together. Travel safely.</Text>
-          
+
           <View style={styles.card}>
-            {/* 🟢 Removed boring protocol text, replaced with clean title */}
             <Text style={styles.modeText}>{getHeaderTitle()}</Text>
 
             {workflowStep === 1 ? (
               <>
                 {currentMode === 'REGISTER' && (
                   <View style={styles.inputWrapper}>
-                    <TextInput style={styles.inputPill} value={username} onChangeText={setUsername} placeholder="Username" placeholderTextColor={lightAuthColors.textMuted} autoCapitalize="none"/>
+                    <TextInput style={styles.inputPill} value={username} onChangeText={setUsername} placeholder="Username" placeholderTextColor={lightAuthColors.textMuted} autoCapitalize="none" autoCorrect={false} maxLength={30} />
                     {usernameStatus === 'AVAILABLE' && <Text style={[styles.statusTextRight, { color: lightAuthColors.primary }]}>[ √ ]</Text>}
                     {usernameStatus === 'TAKEN' && <Text style={[styles.statusTextRight, { color: lightAuthColors.danger }]}>[ X ]</Text>}
                   </View>
                 )}
-                
+
                 <View style={styles.inputWrapper}>
-                  <TextInput style={styles.inputPill} value={contactId} onChangeText={setContactId} placeholder={currentMode === 'LOGIN' ? 'Email or Username' : 'Email Address'} placeholderTextColor={lightAuthColors.textMuted} autoCapitalize="none" keyboardType="email-address"/>
+                  <TextInput style={styles.inputPill} value={contactId} onChangeText={setContactId} placeholder={currentMode === 'LOGIN' ? 'Email or Username' : 'Email Address'} placeholderTextColor={lightAuthColors.textMuted} autoCapitalize="none" autoCorrect={false} keyboardType="email-address" />
                 </View>
 
                 {currentMode !== 'FORGOT_PASSWORD' && (
                   <View style={styles.inputWrapper}>
-                    <TextInput style={[styles.inputPill, { paddingRight: 50 }]} value={password} onChangeText={setPassword} placeholder="Password" placeholderTextColor={lightAuthColors.textMuted} secureTextEntry={!showPassword} autoCapitalize="none"/>
+                    <TextInput style={[styles.inputPill, { paddingRight: 50 }]} value={password} onChangeText={setPassword} placeholder="Password" placeholderTextColor={lightAuthColors.textMuted} secureTextEntry={!showPassword} autoCapitalize="none" />
                     <TouchableOpacity onPress={() => setShowPassword(!showPassword)} style={styles.eyeIcon} hitSlop={{ top: 15, bottom: 15, left: 15, right: 15 }}>
-                      <Feather name={showPassword ? "eye" : "eye-off"} size={20} color={lightAuthColors.textMuted} />
+                      <Feather name={showPassword ? 'eye' : 'eye-off'} size={20} color={lightAuthColors.textMuted} />
                     </TouchableOpacity>
                   </View>
                 )}
@@ -205,16 +206,16 @@ export default function AuthScreen({ onAuthSuccess }: { onAuthSuccess: () => voi
                 {currentMode === 'REGISTER' ? (
                   <TouchableOpacity style={styles.consentRow} onPress={() => setHasConsented(!hasConsented)} activeOpacity={0.8}>
                     <View style={[styles.checkbox, hasConsented && styles.checkboxActive]}>{hasConsented && <Feather name="check" size={14} color="#FFF" />}</View>
-                    <Text style={styles.consentText}>I agree to the <Text style={styles.linkText} onPress={() => Linking.openURL('https://viacustos.github.io/publicinfo/')}>Terms</Text> and <Text style={styles.linkText} onPress={() => Linking.openURL('https://viacustos.github.io/publicinfo/')}>Privacy Policy</Text>.</Text>
+                    <Text style={styles.consentText}>I am 18 or older and I agree to the <Text style={styles.linkText} onPress={() => Linking.openURL(LINKS.terms)}>Terms</Text>, <Text style={styles.linkText} onPress={() => Linking.openURL(LINKS.privacy)}>Privacy Policy</Text> and <Text style={styles.linkText} onPress={() => Linking.openURL(LINKS.guidelines)}>Community Guidelines</Text>.</Text>
                   </TouchableOpacity>
                 ) : (
                   <View style={{ marginTop: 12 }}>
-                    <Text style={styles.disclaimerText}>By continuing, you agree to our Terms of Service and Privacy Policy.</Text>
+                    <Text style={styles.disclaimerText}>By continuing, you agree to our <Text style={styles.linkText} onPress={() => Linking.openURL(LINKS.terms)}>Terms of Service</Text> and <Text style={styles.linkText} onPress={() => Linking.openURL(LINKS.privacy)}>Privacy Policy</Text>.</Text>
                   </View>
                 )}
 
-                <TouchableOpacity style={[styles.primaryButton, (currentMode === 'REGISTER' && !hasConsented) && styles.primaryButtonDisabled]} onPress={executePrimaryAction} disabled={currentMode === 'REGISTER' && !hasConsented || loading} activeOpacity={0.8}>
-                  {loading ? <ActivityIndicator color="#FFF"/> : <Text style={styles.primaryBtnText}>{currentMode === 'LOGIN' ? 'LOG IN' : currentMode === 'REGISTER' ? 'CREATE ACCOUNT' : 'SEND RESET CODE'}</Text>}
+                <TouchableOpacity style={[styles.primaryButton, (currentMode === 'REGISTER' && !hasConsented) && styles.primaryButtonDisabled]} onPress={executePrimaryAction} disabled={(currentMode === 'REGISTER' && !hasConsented) || loading} activeOpacity={0.8}>
+                  {loading ? <ActivityIndicator color="#FFF" /> : <Text style={styles.primaryBtnText}>{currentMode === 'LOGIN' ? 'LOG IN' : currentMode === 'REGISTER' ? 'CREATE ACCOUNT' : 'SEND RESET CODE'}</Text>}
                 </TouchableOpacity>
 
                 <View style={styles.toggleRow}>
@@ -232,25 +233,25 @@ export default function AuthScreen({ onAuthSuccess }: { onAuthSuccess: () => voi
               <>
                 {currentMode === 'FORGOT_PASSWORD' && (
                   <View style={styles.inputWrapper}>
-                    <TextInput style={[styles.inputPill, { paddingRight: 50 }]} value={password} onChangeText={setPassword} placeholder="New Password" placeholderTextColor={lightAuthColors.textMuted} secureTextEntry={!showPassword} autoCapitalize="none"/>
+                    <TextInput style={[styles.inputPill, { paddingRight: 50 }]} value={password} onChangeText={setPassword} placeholder="New Password" placeholderTextColor={lightAuthColors.textMuted} secureTextEntry={!showPassword} autoCapitalize="none" />
                     <TouchableOpacity onPress={() => setShowPassword(!showPassword)} style={styles.eyeIcon} hitSlop={{ top: 15, bottom: 15, left: 15, right: 15 }}>
-                      <Feather name={showPassword ? "eye" : "eye-off"} size={20} color={lightAuthColors.textMuted} />
+                      <Feather name={showPassword ? 'eye' : 'eye-off'} size={20} color={lightAuthColors.textMuted} />
                     </TouchableOpacity>
                   </View>
                 )}
-                
-                {/* 🟢 Fix: Added spacing between OTP code input and the element above it */}
+
                 <View style={{ marginTop: 16 }}>
                   <Text style={styles.label}>6-Digit Verification Code</Text>
-                  <TextInput style={[styles.inputPill, { fontSize: 24, letterSpacing: 10, textAlign: 'center', marginTop: 8 }]} value={otpCode} onChangeText={setOtpCode} placeholder="------" placeholderTextColor={lightAuthColors.textMuted} keyboardType="number-pad" maxLength={6}/>
+                  <TextInput style={[styles.inputPill, { fontSize: 24, letterSpacing: 10, textAlign: 'center', marginTop: 8 }]} value={otpCode} onChangeText={setOtpCode} placeholder="------" placeholderTextColor={lightAuthColors.textMuted} keyboardType="number-pad" maxLength={6} />
+                  <Text style={[styles.disclaimerText, { marginTop: 10 }]}>The code expires in a few minutes. Check your spam folder if you don't see it.</Text>
                 </View>
-                
+
                 {uiMessage && (
                   <View style={styles.messageBox}><Text style={[styles.messageText, uiMessage.type === 'error' ? { color: lightAuthColors.danger } : { color: lightAuthColors.primary }]}>{uiMessage.text}</Text></View>
                 )}
-                
+
                 <TouchableOpacity style={[styles.primaryButton, { marginTop: 24 }]} onPress={handleVerifyOtp} disabled={loading} activeOpacity={0.8}>
-                  {loading ? <ActivityIndicator color="#FFF"/> : <Text style={styles.primaryBtnText}>VERIFY CODE</Text>}
+                  {loading ? <ActivityIndicator color="#FFF" /> : <Text style={styles.primaryBtnText}>VERIFY CODE</Text>}
                 </TouchableOpacity>
               </>
             )}
@@ -262,10 +263,10 @@ export default function AuthScreen({ onAuthSuccess }: { onAuthSuccess: () => voi
 }
 
 const getStyles = () => StyleSheet.create({
-  container: { flexGrow: 1, padding: 24, justifyContent: 'center' }, 
+  container: { flexGrow: 1, padding: 24, justifyContent: 'center' },
   brandTitle: { color: lightAuthColors.text, fontSize: 36, fontWeight: '900', letterSpacing: 2, textAlign: 'center', fontStyle: 'italic', marginBottom: 8 },
   brandSubtitle: { color: lightAuthColors.textMuted, fontSize: 13, fontWeight: '600', textAlign: 'center', marginBottom: 40 },
-  card: { padding: 8 }, 
+  card: { padding: 8 },
   modeText: { color: lightAuthColors.text, fontSize: 18, fontWeight: '800', textAlign: 'center', marginBottom: 24, letterSpacing: 1 },
   label: { color: lightAuthColors.textMuted, fontSize: 11, fontWeight: '800', marginBottom: 6, textTransform: 'uppercase', letterSpacing: 1, textAlign: 'center' },
   inputWrapper: { position: 'relative', justifyContent: 'center', marginBottom: 16 },

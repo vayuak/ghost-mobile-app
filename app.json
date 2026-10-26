@@ -3,22 +3,34 @@
     "name": "WarnPack",
     "slug": "GhostShieldMobile",
     "version": "1.0.0",
-    "scheme": "WarnPack",
+    "scheme": "warnpack",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
-    "userInterfaceStyle": "light",
+    "userInterfaceStyle": "automatic",
     "ios": {
       "supportsTablet": true
     },
     "android": {
       "package": "com.azymarch.WarnPack",
       "versionCode": 1,
+      "googleServicesFile": "./google-services.json",
       "adaptiveIcon": {
         "backgroundColor": "#000000",
         "foregroundImage": "./assets/android-icon-foreground.png"
       },
       "softwareKeyboardLayoutMode": "resize",
       "predictiveBackGestureEnabled": false,
+      "permissions": [
+        "ACCESS_FINE_LOCATION",
+        "ACCESS_COARSE_LOCATION",
+        "POST_NOTIFICATIONS"
+      ],
+      "blockedPermissions": [
+        "android.permission.RECORD_AUDIO",
+        "android.permission.READ_EXTERNAL_STORAGE",
+        "android.permission.WRITE_EXTERNAL_STORAGE",
+        "android.permission.SYSTEM_ALERT_WINDOW"
+      ],
       "intentFilters": [
         {
           "action": "VIEW",
@@ -26,13 +38,8 @@
           "data": [
             {
               "scheme": "https",
-              "host": "letdown-citric-dividable.ngrok-free.dev",
-              "pathPrefix": "/"
-            },
-            {
-              "scheme": "http",
-              "host": "letdown-citric-dividable.ngrok-free.dev",
-              "pathPrefix": "/"
+              "host": "www.warnpack.com",
+              "pathPrefix": "/post"
             }
           ],
           "category": [
@@ -52,7 +59,26 @@
       "expo-status-bar",
       "expo-secure-store",
       "react-native-compressor",
-      "expo-notifications"
+      [
+        "expo-location",
+        {
+          "locationWhenInUsePermission": "WarnPack uses your location only while the app is open, to show AirDrops within 100 m and to pin the ones you send. It is never used in the background."
+        }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "WarnPack needs access to your photos so you can attach a photo or video to a scam warning or choose a profile picture.",
+          "cameraPermission": false,
+          "microphonePermission": false
+        }
+      ],
+      [
+        "expo-notifications",
+        {
+          "color": "#FFB020"
+        }
+      ]
     ],
     "extra": {
       "eas": {

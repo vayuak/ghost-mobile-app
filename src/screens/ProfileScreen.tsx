@@ -1,24 +1,26 @@
 import React, { useState, useCallback, useEffect, useRef } from 'react';
 import { useFocusEffect, useIsFocused } from '@react-navigation/native';
-import { StyleSheet, Text, View, TouchableOpacity, FlatList, Image, Modal, RefreshControl, Platform, Linking, Switch } from 'react-native';
+import { StyleSheet, Text, View, TouchableOpacity, FlatList, Image, Modal, RefreshControl, Platform, Linking, Switch, ScrollView } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Feather, Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import Toast from 'react-native-toast-message';
-import { apiClient, BASE_URL, systemLogout, uploadMultipart, buildFilePart, API_ROUTES } from '../services/api'; 
+import { apiClient, BASE_URL, systemLogout, deleteMyAccount, uploadMultipart, buildFilePart, API_ROUTES } from '../services/api';
 import PostCard from '../components/PostCard';
 import { useTheme } from '../context/ThemeContext';
-import { invalidateAvatar } from '../services/ProfileCache';
+import { invalidateAvatar, clearAvatarCache } from '../services/ProfileCache';
+import { wipeCryptoState } from '../services/CryptoVault';
+import { LINKS } from '../constants/links';
 
 export default function ProfileScreen({ navigation, onLogoutTrigger }: any) {
   const { colors, isDarkMode, toggleTheme } = useTheme();
   const styles = getStyles(colors);
-  
-  const isFocused = useIsFocused(); 
+
+  const isFocused = useIsFocused();
   const insets = useSafeAreaInsets();
-  const flatListRef = useRef<FlatList>(null); 
-  
+  const flatListRef = useRef<FlatList>(null);
+
   const [userPosts, setUserPosts] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
@@ -28,10 +30,11 @@ export default function ProfileScreen({ navigation, onLogoutTrigger }: any) {
   const [currentUsername, setCurrentUsername] = useState<string>('loading...');
   const [uploadPercent, setUploadPercent] = useState<number | null>(null);
   const [imageError, setImageError] = useState(false);
-  
-  // 🟢 FIX: Replaced Alert.alert with this sleek state
+
   const [deleteModal, setDeleteModal] = useState({ visible: false, targetId: null as any });
-  
+  const [deleteAccountModal, setDeleteAccountModal] = useState(false);
+  const [deletingAccount, setDeletingAccount] = useState(false);
+
   const [visiblePosts, setVisiblePosts] = useState<string[]>([]);
   const viewabilityConfig = useRef({ itemVisiblePercentThreshold: 50 }).current;
   const onViewableItemsChanged = useRef(({ viewableItems }: any) => { setVisiblePosts(viewableItems.map((v: any) => String(v.item.id))); }).current;
@@ -65,10 +68,10 @@ export default function ProfileScreen({ navigation, onLogoutTrigger }: any) {
     try {
       const activeUser = await AsyncStorage.getItem('@active_username');
       if (!activeUser) return;
-      const response = await apiClient.get(`/v1/social/user/${encodeURIComponent(activeUser)}/full-profile`);
+      const response = await apiClient.get(API_ROUTES.USERS.PROFILE(activeUser));
       setUserPosts(response.posts || []);
       if (response.profile?.profilePictureUrl) setAvatarUri(response.profile.profilePictureUrl);
-    } catch (e) {} 
+    } catch (e) {}
     finally { setIsLoading(false); setIsRefreshing(false); }
   };
 
@@ -81,6 +84,22 @@ export default function ProfileScreen({ navigation, onLogoutTrigger }: any) {
     else { const parentNav = navigation.getParent(); if (parentNav) parentNav.reset({ index: 0, routes: [{ name: 'Login' }] }); else navigation.reset({ index: 0, routes: [{ name: 'Login' }] }); }
   };
 
+  // Permanent deletion (Google Play requirement): server removes posts, media, comments, votes, reports and the account.
+  const confirmDeleteAccount = async () => {
+    setDeletingAccount(true);
+    const name = currentUsername;
+    try {
+      await deleteMyAccount();                      // also clears the local session and shows the login screen
+      try { await wipeCryptoState(name); } catch {}
+      try { await clearAvatarCache(); } catch {}
+      setDeleteAccountModal(false);
+      setMenuVisible(false);
+      Toast.show({ type: 'success', text1: 'Account deleted', text2: 'Your account and content have been removed.' });
+    } catch (e: any) {
+      Toast.show({ type: 'error', text1: 'Could not delete account', text2: e?.message || 'Please try again.' });
+    } finally { setDeletingAccount(false); }
+  };
+
   const handleEditProfileDP = async () => {
     const result = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['images'], allowsEditing: true, aspect: [1, 1], quality: 0.8 });
     if (result.canceled) return;
@@ -90,7 +109,7 @@ export default function ProfileScreen({ navigation, onLogoutTrigger }: any) {
     try {
       const formData = new FormData();
       const filePart = buildFilePart(asset);
-      if (Platform.OS === 'web') { const res = await fetch(asset.uri); const blob = await res.blob(); formData.append('file', blob, filePart.name); } 
+      if (Platform.OS === 'web') { const res = await fetch(asset.uri); const blob = await res.blob(); formData.append('file', blob, filePart.name); }
       else { formData.append('file', filePart); }
       const updateRes = await uploadMultipart(API_ROUTES.USERS.UPDATE_DP, formData, setUploadPercent);
       const newAvatarUrl = updateRes?.avatarUrl || updateRes?.profilePictureUrl || updateRes?.url;
@@ -99,11 +118,11 @@ export default function ProfileScreen({ navigation, onLogoutTrigger }: any) {
         await AsyncStorage.setItem('@user_avatar', newAvatarUrl);
         if (currentUsername) await invalidateAvatar(currentUsername);
       }
-      Toast.show({ type: 'success', text1: 'Success', text2: 'Profile picture updated globally.' });
-    } catch (e: any) { 
+      Toast.show({ type: 'success', text1: 'Success', text2: 'Profile picture updated.' });
+    } catch (e: any) {
       setAvatarUri(previousAvatar);
-      Toast.show({ type: 'error', text1: 'Upload Failed', text2: e.message || "Could not update profile picture." }); 
-    } 
+      Toast.show({ type: 'error', text1: 'Upload Failed', text2: e.message || 'Could not update profile picture.' });
+    }
     finally { setUploadPercent(null); }
   };
 
@@ -114,7 +133,7 @@ export default function ProfileScreen({ navigation, onLogoutTrigger }: any) {
       await apiClient.delete(API_ROUTES.POSTS.DELETE(postId));
       setUserPosts(current => current.filter(post => String(post.id) !== String(postId)));
       Toast.show({ type: 'success', text1: 'Success', text2: 'Post permanently deleted.' });
-    } catch (e: any) { Toast.show({ type: 'error', text1: 'Delete Failed', text2: e.message || "An unknown network error occurred." }); }
+    } catch (e: any) { Toast.show({ type: 'error', text1: 'Delete Failed', text2: e.message || 'An unknown network error occurred.' }); }
   };
 
   const getFullAvatarUrl = (uri: string | null) => {
@@ -138,7 +157,7 @@ export default function ProfileScreen({ navigation, onLogoutTrigger }: any) {
         ref={flatListRef}
         data={userPosts}
         keyExtractor={(item, index) => item.id ? item.id.toString() : index.toString()}
-        contentContainerStyle={{ paddingBottom: insets.bottom + 100 }} 
+        contentContainerStyle={{ paddingBottom: insets.bottom + 100 }}
         refreshControl={<RefreshControl refreshing={isRefreshing} onRefresh={handleRefresh} tintColor={colors.text} />}
         onViewableItemsChanged={onViewableItemsChanged}
         viewabilityConfig={viewabilityConfig}
@@ -162,56 +181,58 @@ export default function ProfileScreen({ navigation, onLogoutTrigger }: any) {
           </View>
         }
         renderItem={({ item }) => <PostCard post={item} currentUsername={currentUsername} onDelete={() => setDeleteModal({ visible: true, targetId: item.id })} isVisible={visiblePosts.includes(String(item.id)) && !menuVisible && isFocused} onCommentTap={() => navigation.navigate('SinglePost', { postId: item.id })} />}
-        ListEmptyComponent={<Text style={{ color: colors.textMuted, textAlign: 'center', marginTop: 30 }}>No posts yet.</Text>}
+        ListEmptyComponent={<Text style={{ color: colors.textMuted, textAlign: 'center', marginTop: 30 }}>No posts yet. Share a scam warning to help the next traveler.</Text>}
       />
 
       <Modal visible={menuVisible} animationType="slide" transparent={true} onRequestClose={() => setMenuVisible(false)}>
         <View style={styles.modalOverlay}>
           <TouchableOpacity style={{ flex: 1 }} onPress={() => setMenuVisible(false)} />
-          <View style={[styles.modalContent, { paddingBottom: Math.max(insets.bottom, 20) }]}>
-            <Text style={styles.menuSectionHeader}>PREFERENCES</Text>
-            
-            <View style={styles.menuItemRow}>
-              <Text style={styles.menuText}>Dark Theme</Text>
-              <Switch value={isDarkMode} onValueChange={toggleTheme} trackColor={{ false: colors.border, true: colors.primary }} />
-            </View>
-            
-            <TouchableOpacity style={styles.menuItemRow} onPress={() => { setMenuVisible(false); navigation.navigate('PremiumUpgrade'); }}>
-              <Text style={[styles.menuText, { color: '#FBBF24', fontWeight: 'bold' }]}>✨ Upgrade to Premium</Text>
-              <Feather name="chevron-right" size={18} color="#FBBF24" />
-            </TouchableOpacity>
+          <View style={[styles.modalContent, { paddingBottom: Math.max(insets.bottom, 20), maxHeight: '85%' }]}>
+            <ScrollView showsVerticalScrollIndicator={false}>
+              <Text style={styles.menuSectionHeader}>PREFERENCES</Text>
 
-            {/* 🟢 Maintained your support & help links here */}
-            <Text style={[styles.menuSectionHeader, { marginTop: 16 }]}>SUPPORT & HELP</Text>
-            <TouchableOpacity style={styles.menuItemRow} onPress={() => Linking.openURL('https://viacustos.github.io/publicinfo/')}>
-              <Text style={styles.menuText}>Report a Bug</Text>
-              <Feather name="external-link" size={16} color={colors.textMuted} />
-            </TouchableOpacity>
-            <TouchableOpacity style={styles.menuItemRow} onPress={() => Linking.openURL('https://viacustos.github.io/publicinfo/')}>
-              <Text style={styles.menuText}>Suggest a Feature</Text>
-              <Feather name="external-link" size={16} color={colors.textMuted} />
-            </TouchableOpacity>
-            <TouchableOpacity style={styles.menuItemRow} onPress={() => Linking.openURL('https://viacustos.github.io/publicinfo/')}>
-              <Text style={styles.menuText}>Help & FAQ</Text>
-              <Feather name="help-circle" size={16} color={colors.textMuted} />
-            </TouchableOpacity>
-            <TouchableOpacity style={styles.menuItemRow} onPress={() => { setMenuVisible(false); navigation.navigate('BlockedUsers'); }}>
-              <Text style={styles.menuText}>Blocked Users</Text>
-              <Feather name="shield" size={16} color={colors.textMuted} />
-            </TouchableOpacity>
+              <View style={styles.menuItemRow}>
+                <Text style={styles.menuText}>Dark Theme</Text>
+                <Switch value={isDarkMode} onValueChange={toggleTheme} trackColor={{ false: colors.border, true: colors.primary }} />
+              </View>
 
-            <Text style={[styles.menuSectionHeader, { marginTop: 16 }]}>LEGAL</Text>
-            <TouchableOpacity style={styles.menuItemRow} onPress={() => Linking.openURL('https://viacustos.github.io/publicinfo/')}><Text style={styles.menuText}>Terms of Service</Text></TouchableOpacity>
-            <TouchableOpacity style={styles.menuItemRow} onPress={() => Linking.openURL('https://viacustos.github.io/publicinfo/')}><Text style={styles.menuText}>Privacy Policy</Text></TouchableOpacity>
+              <Text style={[styles.menuSectionHeader, { marginTop: 16 }]}>SUPPORT & HELP</Text>
+              <TouchableOpacity style={styles.menuItemRow} onPress={() => Linking.openURL(LINKS.bugEmail)}>
+                <Text style={styles.menuText}>Report a Bug</Text>
+                <Feather name="mail" size={16} color={colors.textMuted} />
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.menuItemRow} onPress={() => Linking.openURL(LINKS.featureEmail)}>
+                <Text style={styles.menuText}>Suggest a Feature</Text>
+                <Feather name="mail" size={16} color={colors.textMuted} />
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.menuItemRow} onPress={() => Linking.openURL(LINKS.help)}>
+                <Text style={styles.menuText}>Help & FAQ</Text>
+                <Feather name="help-circle" size={16} color={colors.textMuted} />
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.menuItemRow} onPress={() => { setMenuVisible(false); navigation.navigate('BlockedUsers'); }}>
+                <Text style={styles.menuText}>Blocked Users</Text>
+                <Feather name="shield" size={16} color={colors.textMuted} />
+              </TouchableOpacity>
 
-            <TouchableOpacity style={[styles.menuItemRow, { marginTop: 20 }]} onPress={handleLogout}>
-              <Feather name="log-out" size={18} color={colors.danger} /><Text style={[styles.menuText, { color: colors.danger, marginLeft: 10 }]}>Logout</Text>
-            </TouchableOpacity>
+              <Text style={[styles.menuSectionHeader, { marginTop: 16 }]}>LEGAL</Text>
+              <TouchableOpacity style={styles.menuItemRow} onPress={() => Linking.openURL(LINKS.terms)}><Text style={styles.menuText}>Terms of Service</Text></TouchableOpacity>
+              <TouchableOpacity style={styles.menuItemRow} onPress={() => Linking.openURL(LINKS.privacy)}><Text style={styles.menuText}>Privacy Policy</Text></TouchableOpacity>
+              <TouchableOpacity style={styles.menuItemRow} onPress={() => Linking.openURL(LINKS.guidelines)}><Text style={styles.menuText}>Community Guidelines</Text></TouchableOpacity>
+
+              <Text style={[styles.menuSectionHeader, { marginTop: 16 }]}>ACCOUNT</Text>
+              <TouchableOpacity style={styles.menuItemRow} onPress={handleLogout}>
+                <Text style={[styles.menuText, { color: colors.text }]}>Logout</Text>
+                <Feather name="log-out" size={16} color={colors.textMuted} />
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.menuItemRow} onPress={() => { setMenuVisible(false); setTimeout(() => setDeleteAccountModal(true), 300); }}>
+                <Text style={[styles.menuText, { color: colors.danger }]}>Delete account</Text>
+                <Feather name="trash-2" size={16} color={colors.danger} />
+              </TouchableOpacity>
+            </ScrollView>
           </View>
         </View>
       </Modal>
 
-      {/* 🟢 NEW: Custom Sleek Confirm Modal for Delete */}
       <Modal visible={deleteModal.visible} transparent={true} animationType="fade">
         <View style={styles.modalOverlay}>
           <TouchableOpacity style={{ flex: 1 }} onPress={() => setDeleteModal({ ...deleteModal, visible: false })} />
@@ -221,6 +242,24 @@ export default function ProfileScreen({ navigation, onLogoutTrigger }: any) {
               <Text style={styles.actionBtnText}>Delete Post</Text>
             </TouchableOpacity>
             <TouchableOpacity style={[styles.actionBtnCancel, { borderColor: colors.border }]} onPress={() => setDeleteModal({ ...deleteModal, visible: false })}>
+              <Text style={[styles.actionBtnText, { color: colors.text }]}>Cancel</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
+      <Modal visible={deleteAccountModal} transparent={true} animationType="fade" onRequestClose={() => setDeleteAccountModal(false)}>
+        <View style={styles.modalOverlay}>
+          <TouchableOpacity style={{ flex: 1 }} onPress={() => !deletingAccount && setDeleteAccountModal(false)} />
+          <View style={[styles.confirmModalContent, { paddingBottom: Math.max(insets.bottom, 20) }]}>
+            <Text style={[styles.confirmMessage, { color: colors.text }]}>Permanently delete your account?</Text>
+            <Text style={{ color: colors.textMuted, textAlign: 'center', marginBottom: 22, fontSize: 13, lineHeight: 19 }}>
+              Your profile, posts, photos, videos, comments and votes will be removed from our servers. Chats stored on this phone are erased when you uninstall the app. This cannot be undone.
+            </Text>
+            <TouchableOpacity style={[styles.actionBtnDestructive, deletingAccount && { opacity: 0.6 }]} onPress={confirmDeleteAccount} disabled={deletingAccount}>
+              <Text style={styles.actionBtnText}>{deletingAccount ? 'Deleting...' : 'Delete everything'}</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={[styles.actionBtnCancel, { borderColor: colors.border }]} onPress={() => setDeleteAccountModal(false)} disabled={deletingAccount}>
               <Text style={[styles.actionBtnText, { color: colors.text }]}>Cancel</Text>
             </TouchableOpacity>
           </View>
@@ -250,9 +289,8 @@ const getStyles = (colors: any) => StyleSheet.create({
   menuSectionHeader: { color: colors.textMuted, fontSize: 11, fontWeight: '800', letterSpacing: 1, marginBottom: 8 },
   menuItemRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: colors.border },
   menuText: { fontSize: 14, fontWeight: '700', color: colors.text },
-  // Modal Styles
   confirmModalContent: { backgroundColor: colors.background, borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 24 },
-  confirmMessage: { fontSize: 16, fontWeight: '700', textAlign: 'center', marginBottom: 24 },
+  confirmMessage: { fontSize: 16, fontWeight: '700', textAlign: 'center', marginBottom: 12 },
   actionBtnDestructive: { backgroundColor: colors.danger, paddingVertical: 16, borderRadius: 12, alignItems: 'center', marginBottom: 12 },
   actionBtnCancel: { paddingVertical: 16, borderRadius: 12, alignItems: 'center', borderWidth: 1 },
   actionBtnText: { color: '#FFF', fontWeight: '800', fontSize: 15 }

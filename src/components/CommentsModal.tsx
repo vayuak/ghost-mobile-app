@@ -2,10 +2,11 @@ import React, { useState, useEffect, useRef } from 'react';
 import { StyleSheet, Text, View, TextInput, TouchableOpacity, FlatList, KeyboardAvoidingView, Platform, Image, ActivityIndicator, Modal, Keyboard, Alert } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
-import { useSafeAreaInsets } from 'react-native-safe-area-context'; // 🟢 ADDED
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { apiClient, BASE_URL, API_ROUTES } from '../services/api';
+import { isUserBlocked } from '../services/LocalDB';
 import Toast from 'react-native-toast-message';
-import { useTheme } from '../context/ThemeContext'; 
+import { useTheme } from '../context/ThemeContext';
 
 interface CommentsModalProps {
   visible: boolean;
@@ -13,21 +14,21 @@ interface CommentsModalProps {
   currentUsername?: string;
   onClose: () => void;
   onCommentAdded?: () => void;
-  onCommentDeleted?: () => void; 
+  onCommentDeleted?: () => void;
 }
 
 export default function CommentsModal({ visible, postId, currentUsername, onClose, onCommentAdded, onCommentDeleted }: CommentsModalProps) {
   const { colors, isDarkMode } = useTheme();
   const styles = getStyles(colors, isDarkMode);
-  const navigation = useNavigation<any>(); 
-  const insets = useSafeAreaInsets(); // 🟢 ADDED
-  
+  const navigation = useNavigation<any>();
+  const insets = useSafeAreaInsets();
+
   const [comments, setComments] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [newComment, setNewComment] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [replyingTo, setReplyingTo] = useState<any | null>(null);
-  
+
   const inputRef = useRef<TextInput>(null);
   const [keyboardHeight, setKeyboardHeight] = useState(0);
 
@@ -41,14 +42,15 @@ export default function CommentsModal({ visible, postId, currentUsername, onClos
   }, []);
 
   useEffect(() => {
+    // Only load comments while the sheet is open (feeds render one modal per card; hidden ones must stay idle)
     if (visible) { setLoading(true); fetchComments(); }
   }, [visible, postId]);
 
   const fetchComments = async () => {
     try {
       const data = await apiClient.get(API_ROUTES.POSTS.GET_COMMENTS(postId, Date.now()));
-      setComments(data || []);
-    } catch (error) { console.warn("Fetch failed"); } 
+      setComments((data || []).filter((c: any) => !isUserBlocked(String(c.username || ''))));
+    } catch (error) { console.warn('Fetch comments failed'); }
     finally { setLoading(false); }
   };
 
@@ -62,15 +64,15 @@ export default function CommentsModal({ visible, postId, currentUsername, onClos
       setNewComment('');
       setReplyingTo(null);
       if (onCommentAdded) onCommentAdded();
-      await fetchComments(); 
-    } catch (error: any) { Toast.show({ type: 'error', text1: 'Failed to post', text2: error.message }); } 
+      await fetchComments();
+    } catch (error: any) { Toast.show({ type: 'error', text1: 'Could not post comment', text2: error.message }); }
     finally { setIsSubmitting(false); }
   };
 
   const handleDeleteComment = (commentId: string | number) => {
-    Alert.alert("Delete", "Delete this comment?", [
-      { text: "Cancel", style: "cancel" },
-      { text: "Delete", style: "destructive", onPress: async () => {
+    Alert.alert('Delete', 'Delete this comment?', [
+      { text: 'Cancel', style: 'cancel' },
+      { text: 'Delete', style: 'destructive', onPress: async () => {
           try {
             await apiClient.delete(API_ROUTES.POSTS.DELETE_COMMENT(commentId));
             setComments(prev => prev.filter(c => c.id !== commentId && c.parentId !== commentId));
@@ -81,9 +83,9 @@ export default function CommentsModal({ visible, postId, currentUsername, onClos
   };
 
   const handleReportComment = (commentId: string | number) => {
-    Alert.alert("Report", "Flag this comment?", [
-      { text: "Cancel", style: "cancel" },
-      { text: "Report", style: "destructive", onPress: async () => {
+    Alert.alert('Report', 'Flag this comment?', [
+      { text: 'Cancel', style: 'cancel' },
+      { text: 'Report', style: 'destructive', onPress: async () => {
           try {
             await apiClient.post(API_ROUTES.MODERATION.REPORT, { targetId: commentId, type: 'COMMENT_REPORT' });
             setComments(prev => prev.filter(c => c.id !== commentId && c.parentId !== commentId));
@@ -106,9 +108,9 @@ export default function CommentsModal({ visible, postId, currentUsername, onClos
   };
 
   const renderComment = ({ item }: { item: any }) => {
-    const isReply = item.parentId !== null;
+    const isReply = item.parentId !== null && item.parentId !== undefined;
     const cleanAuthor = (item.username || '').replace(/^@/, '').trim().toLowerCase();
-    
+
     const rawAvatar = item.avatarUrl || item.profilePictureUrl || item.profile?.avatarUrl;
     const avatarUri = getFullAvatarUrl(rawAvatar);
 
@@ -119,15 +121,15 @@ export default function CommentsModal({ visible, postId, currentUsername, onClos
             {avatarUri ? <Image source={{ uri: avatarUri }} style={styles.avatarImage} /> : <View style={styles.avatarPlaceholder}><Text style={styles.avatarLetter}>{cleanAuthor[0]?.toUpperCase() || 'U'}</Text></View>}
             <Text style={styles.authorName}>@{cleanAuthor}</Text>
           </TouchableOpacity>
-          
+
           {cleanAuthor === (currentUsername || '').replace(/^@/, '').trim().toLowerCase() ? (
-             <TouchableOpacity onPress={() => handleDeleteComment(item.id)} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
-               <Feather name="trash-2" size={14} color={colors.danger}/>
-             </TouchableOpacity>
+            <TouchableOpacity onPress={() => handleDeleteComment(item.id)} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
+              <Feather name="trash-2" size={14} color={colors.danger} />
+            </TouchableOpacity>
           ) : (
-             <TouchableOpacity onPress={() => handleReportComment(item.id)} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
-               <Feather name="flag" size={12} color={colors.textMuted}/>
-             </TouchableOpacity>
+            <TouchableOpacity onPress={() => handleReportComment(item.id)} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
+              <Feather name="flag" size={12} color={colors.textMuted} />
+            </TouchableOpacity>
           )}
         </View>
         <Text style={styles.commentContent}>{item.content}</Text>
@@ -142,11 +144,9 @@ export default function CommentsModal({ visible, postId, currentUsername, onClos
     <Modal visible={visible} animationType="slide" transparent={true} onRequestClose={onClose}>
       <View style={styles.modalOverlay}>
         <TouchableOpacity style={styles.dismissArea} activeOpacity={1} onPress={onClose} />
-        {/* 🟢 FIX: Added keyboardVerticalOffset for iOS modals */}
-        <KeyboardAvoidingView 
-          style={[styles.bottomSheetContainer, Platform.OS === 'android' && { paddingBottom: keyboardHeight }]} 
+        <KeyboardAvoidingView
+          style={[styles.bottomSheetContainer, Platform.OS === 'android' && { paddingBottom: keyboardHeight }]}
           behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-          keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 0}
         >
           <View style={styles.sheetHeader}>
             <Text style={styles.headerTitle}>Comments</Text>
@@ -164,13 +164,11 @@ export default function CommentsModal({ visible, postId, currentUsername, onClos
             </View>
           )}
 
-          {/* 🟢 FIX: Added dynamic bottom padding to clear the iOS Home Indicator */}
           <View style={[styles.inputContainer, { paddingBottom: Math.max(insets.bottom, 12) }]}>
-            <TextInput ref={inputRef} style={styles.input} placeholder="Add a comment..." placeholderTextColor={colors.textMuted} value={newComment} onChangeText={setNewComment} multiline maxLength={500} />
-            {/* 🟢 FIX: Changed onPress to onPressIn to beat the keyboard dismiss layout shift */}
-            <TouchableOpacity 
-              style={[styles.sendButton, !newComment.trim() && { opacity: 0.5 }]} 
-              onPressIn={handleSend} 
+            <TextInput ref={inputRef} style={styles.input} placeholder="Add a comment (no links or promotions)..." placeholderTextColor={colors.textMuted} value={newComment} onChangeText={setNewComment} multiline maxLength={500} />
+            <TouchableOpacity
+              style={[styles.sendButton, !newComment.trim() && { opacity: 0.5 }]}
+              onPressIn={handleSend}
               disabled={!newComment.trim() || isSubmitting}
             >
               {isSubmitting ? <ActivityIndicator size="small" color="#FFF" /> : <Feather name="arrow-up" size={20} color="#FFF" />}
@@ -189,7 +187,7 @@ const getStyles = (colors: any, isDarkMode: boolean) => StyleSheet.create({
   sheetHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', padding: 20 },
   headerTitle: { color: colors.text, fontSize: 16, fontWeight: '800' },
   commentNode: { marginLeft: 16, marginRight: 16, marginTop: 16 },
-  replyNode: { marginLeft: 44, paddingLeft: 12, borderLeftWidth: 2, borderColor: colors.surface }, 
+  replyNode: { marginLeft: 44, paddingLeft: 12, borderLeftWidth: 2, borderColor: colors.surface },
   commentHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   authorRow: { flexDirection: 'row', alignItems: 'center' },
   avatarImage: { width: 32, height: 32, borderRadius: 16, marginRight: 10, backgroundColor: colors.surface },
@@ -202,7 +200,7 @@ const getStyles = (colors: any, isDarkMode: boolean) => StyleSheet.create({
   emptyText: { color: colors.textMuted, textAlign: 'center', marginTop: 40, fontSize: 14 },
   replyingIndicator: { flexDirection: 'row', justifyContent: 'space-between', paddingHorizontal: 16, paddingVertical: 12, backgroundColor: colors.surface },
   replyingText: { color: colors.textMuted, fontSize: 12, fontWeight: '600' },
-  inputContainer: { flexDirection: 'row', alignItems: 'flex-end', paddingHorizontal: 16, paddingTop: 12, backgroundColor: colors.background }, // Removed hardcoded paddingBottom
+  inputContainer: { flexDirection: 'row', alignItems: 'flex-end', paddingHorizontal: 16, paddingTop: 12, backgroundColor: colors.background },
   input: { flex: 1, backgroundColor: colors.surface, color: colors.text, borderRadius: 24, paddingHorizontal: 16, paddingTop: 12, paddingBottom: 12, fontSize: 15, maxHeight: 100 },
   sendButton: { width: 44, height: 44, borderRadius: 22, backgroundColor: colors.primary, justifyContent: 'center', alignItems: 'center', marginLeft: 10 },
 });
