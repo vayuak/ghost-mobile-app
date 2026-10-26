@@ -1,9 +1,9 @@
 {
   "expo": {
-    "name": "ViaCustos",
+    "name": "WarnPack",
     "slug": "GhostShieldMobile",
     "version": "1.0.0",
-    "scheme": "ViaCustos",
+    "scheme": "WarnPack",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
@@ -11,7 +11,7 @@
       "supportsTablet": true
     },
     "android": {
-      "package": "com.azymarch.ViaCustos",
+      "package": "com.azymarch.WarnPack",
       "versionCode": 1,
       "adaptiveIcon": {
         "backgroundColor": "#000000",

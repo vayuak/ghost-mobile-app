@@ -129,7 +129,7 @@ export default function ProfileScreen({ navigation, onLogoutTrigger }: any) {
     <SafeAreaView style={styles.container} edges={['top']}>
       <View style={styles.topNav}>
         <TouchableOpacity onPress={() => flatListRef.current?.scrollToOffset({ offset: 0, animated: true })}>
-          <Text style={styles.brandTitle}>ViaCustos</Text>
+          <Text style={styles.brandTitle}>WarnPack</Text>
         </TouchableOpacity>
         <TouchableOpacity onPress={() => setMenuVisible(true)} style={styles.iconButton} hitSlop={{ top: 15, bottom: 15, left: 15, right: 15 }}><Feather name="settings" size={20} color={colors.text} /></TouchableOpacity>
       </View>

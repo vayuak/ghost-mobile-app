@@ -28,7 +28,7 @@ export default function PremiumUpgradeScreen({ navigation }: any) {
         <TouchableOpacity onPress={() => navigation.goBack()} hitSlop={{ top: 15, bottom: 15, left: 15, right: 15 }}>
           <Feather name="arrow-left" size={24} color={colors.text} />
         </TouchableOpacity>
-        <Text style={styles.headerTitle}>ViaCustos PREMIUM</Text>
+        <Text style={styles.headerTitle}>WarnPack PREMIUM</Text>
         <View style={{ width: 24 }} />
       </View>
 

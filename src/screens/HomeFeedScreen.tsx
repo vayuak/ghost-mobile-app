@@ -141,7 +141,7 @@ export default function HomeFeedScreen({ navigation, route }: any) {
     <SafeAreaView style={styles.screenContainer} edges={['top']}>
       <View style={styles.headerContainer}>
         <TouchableOpacity style={styles.brandDropdown} onPress={() => setIsDropdownVisible(true)} activeOpacity={0.7}>
-          <Text style={styles.brandTitle}>ViaCustos</Text>
+          <Text style={styles.brandTitle}>WarnPack</Text>
           <Feather name="chevron-down" size={18} color={colors.text} style={styles.chevronIcon} />
         </TouchableOpacity>
         <TouchableOpacity onPress={() => setSearchModalVisible(true)} style={styles.lensButton} hitSlop={{ top: 15, bottom: 15, left: 15, right: 15 }}><Feather name="search" size={24} color={colors.text} /></TouchableOpacity>

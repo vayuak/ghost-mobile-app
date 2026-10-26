@@ -166,7 +166,7 @@ export default function AuthScreen({ onAuthSuccess }: { onAuthSuccess: () => voi
       <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={{ flex: 1 }}>
         <ScrollView contentContainerStyle={styles.container} keyboardShouldPersistTaps="handled">
           
-          <Text style={styles.brandTitle}>ViaCustos</Text>
+          <Text style={styles.brandTitle}>WarnPack</Text>
           <Text style={styles.brandSubtitle}>Explore together. Travel safely.</Text>
           
           <View style={styles.card}>

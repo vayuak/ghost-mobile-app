@@ -66,7 +66,7 @@ export default function PostCard({ post, currentUsername: propUsername, onDelete
   const handleShare = async () => {
     try {
       const shareUrl = `${BASE_URL}/post/${post.id}`;
-      await Share.share({ message: `Check out this post by @${displayUsername} on ViaCustos!\n\n${shareUrl}`, url: shareUrl, title: 'ViaCustos Post' });
+      await Share.share({ message: `Check out this post by @${displayUsername} on WarnPack!\n\n${shareUrl}`, url: shareUrl, title: 'WarnPack Post' });
     } catch (error) {}
   };
 
