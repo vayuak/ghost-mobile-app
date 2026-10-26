@@ -1,21 +1,21 @@
 {
   "project_info": {
-    "project_number": "769028779546",
-    "project_id": "warnpack-f6692",
-    "storage_bucket": "warnpack-f6692.firebasestorage.app"
+    "project_number": "804325038183",
+    "project_id": "warnpack-e1074",
+    "storage_bucket": "warnpack-e1074.firebasestorage.app"
   },
   "client": [
     {
       "client_info": {
-        "mobilesdk_app_id": "1:769028779546:android:8fa8674c078812635c6ba3",
+        "mobilesdk_app_id": "1:804325038183:android:ab7956b62b0a5028cb1cc2",
         "android_client_info": {
-          "package_name": "com.azymarch.GhostShieldMobile"
+          "package_name": "com.azymarch.WarnPack"
         }
       },
       "oauth_client": [],
       "api_key": [
         {
-          "current_key": "AIzaSyB6Atr58QOVhog_6mGCcS4fEFOe17jJg9g"
+          "current_key": "AIzaSyDKk1yn4Xrnp1llQ6ZeqzFQcjV4brYpDJ8"
         }
       ],
       "services": {
